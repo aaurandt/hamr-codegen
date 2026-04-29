@@ -573,7 +573,7 @@ object GumboXComputeContributions {
       GumboXRustUtil.stateVarsToParams(subclauseInfoOpt, F, types, crustTypeProvider)
 
     subclauseInfoOpt match {
-      case Some(GclAnnexClauseInfo(GclSubclause(stateVars, _, _, Some(initializes), _, _), gclSymbolTable)) if initializes.guarantees.nonEmpty =>
+      case Some(GclAnnexClauseInfo(GclSubclause(stateVars, _, _, Some(initializes), _, _, _), gclSymbolTable)) if initializes.guarantees.nonEmpty =>
 
         var combinedSpecCalls: ISZ[ST] = ISZ()
 
@@ -753,7 +753,7 @@ object GumboXComputeContributions {
       GumboXRustUtil.stateVarsToParams(subclauseInfoOpt, F, types, crustTypeProvider)
 
     subclauseInfoOpt match {
-      case Some(GclAnnexClauseInfo(GclSubclause(stateVars, _, _, _, _, Some(compute)), gclSymbolTable)) => { // process top level assume/guarantees
+      case Some(GclAnnexClauseInfo(GclSubclause(stateVars, _, _, _, _, Some(compute), _), gclSymbolTable)) => { // process top level assume/guarantees
 
         var CEP_T_Assum_Params: Set[GGParam] = Set.empty
 
