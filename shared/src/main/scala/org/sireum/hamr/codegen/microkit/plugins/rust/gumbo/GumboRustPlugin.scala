@@ -257,6 +257,14 @@ object GumboRustPlugin {
         structDef = structDef(items = structDef.items :+ RAST.MarkerPlaceholder(m))
       }
 
+      if (subclauseInfo.annex.monitor.nonEmpty) {
+        var monitor: ISZ[RAST.Item] = ISZ()
+        monitor = monitor :+ RAST.ItemString(s"""pub r2u2_monitor : r2u2_core::Monitor""")
+        val m = Marker.createSlashMarker(GumboRustUtil.GumboMarkers.gumboMonitor)
+        markers = markers :+ m
+        structDef = structDef(items = structDef.items :+ RAST.MarkerWrap(m, monitor, ",\n", Some(",")))
+      }
+
       if (subclauseInfo.annex.methods.nonEmpty) {
 
         var verusFuns: ISZ[RAST.Item] = ISZ()
@@ -388,8 +396,9 @@ object GumboRustPlugin {
         i match {
           case f: RAST.FnImpl =>
             if (f.ident.string == "new") {
+              var b: Option[RAST.MethodBody] = null
               if (optStateVarInits.nonEmpty) {
-                val b: Option[RAST.MethodBody] = f.body match {
+                b = f.body match {
                   case Some(RAST.MethodBody(ISZ(self: RAST.BodyItemSelf))) =>
                     val m = Marker.createSlashMarker(GumboRustUtil.GumboMarkers.stateVarInit)
                     markers = markers :+ m
@@ -397,17 +406,27 @@ object GumboRustPlugin {
                     Some(RAST.MethodBody(ISZ(self(items = self.items :+ wrapper.prettyST))))
                   case _ => halt("Not expecting new to contain anything other than Self {...}")
                 }
-                updatedImplItems = updatedImplItems :+ f(body = b)
               } else{
-                val b: Option[RAST.MethodBody] = f.body match {
+                b = f.body match {
                   case Some(RAST.MethodBody(ISZ(self: RAST.BodyItemSelf))) =>
                     val m = Marker.createSlashPlaceholderMarker(GumboRustUtil.GumboMarkers.stateVarInit)
                     markers = markers :+ m
                     Some(RAST.MethodBody(ISZ(self(items = self.items :+ RAST.MarkerPlaceholder(m).prettyST))))
                   case _ => halt("Not expecting new to contain anything other than Self {...}")
                 }
-                updatedImplItems = updatedImplItems :+ f(body = b)
               }
+              if (subclauseInfo.annex.monitor.nonEmpty) {
+                b = f.body match {
+                  case Some(RAST.MethodBody(ISZ(self: RAST.BodyItemSelf))) =>
+                    var monitor: ISZ[RAST.Item] = ISZ()
+                    monitor = monitor :+ RAST.ItemString(s"""r2u2_monitor: r2u2_core::Monitor::default()""")
+                    val m = Marker.createSlashMarker(GumboRustUtil.GumboMarkers.gumboMonitor)
+                    markers = markers :+ m
+                    Some(RAST.MethodBody(ISZ(self(items = self.items :+ RAST.MarkerWrap(m, monitor, ",\n", Some(",")).prettyST))))
+                  case _ => halt("Not expecting new to contain anything other than Self {...}")
+                }
+              }
+              updatedImplItems = updatedImplItems :+ f(body = b)
             }
             else if (f.ident.string == "initialize") {
               if (subclauseInfo.annex.initializes.nonEmpty) {
