@@ -428,8 +428,9 @@ object GumboRustPlugin {
                 updatedImplItems = updatedImplItems :+ init._2
               }
             } else if (f.ident.string == "timeTriggered") {
+              var tt: (ISZ[Marker], RAST.FnImpl) = null
               if (subclauseInfo.annex.compute.nonEmpty) {
-                val tt: (ISZ[Marker], RAST.FnImpl) = handleCompute(
+                tt = handleCompute(
                   fn = f,
                   thread = thread,
                   subclauseInfo = subclauseInfo,
@@ -439,12 +440,23 @@ object GumboRustPlugin {
                   store = localStore,
                   reporter = reporter)
                 markers = markers ++ tt._1
-                updatedImplItems = updatedImplItems :+ tt._2
               } else {
-                val tt = handleComputePlaceholder(f)
+                tt = handleComputePlaceholder(f)
                 markers = markers ++ tt._1
-                updatedImplItems = updatedImplItems :+ tt._2
               }
+              if (subclauseInfo.annex.monitor.nonEmpty) {
+                tt = handleMonitor(
+                  fn = tt._2,
+                  thread = thread,
+                  subclauseInfo = subclauseInfo,
+                  types = types,
+                  tp = CRustTypePlugin.getCRustTypeProvider(localStore).get,
+                  symbolTable = symbolTable,
+                  store = localStore,
+                  reporter = reporter)
+                markers = markers ++ tt._1
+              }
+              updatedImplItems = updatedImplItems :+ tt._2
             } else {
               updatedImplItems = updatedImplItems :+ i
             }
@@ -755,6 +767,30 @@ object GumboRustPlugin {
         requires = ISZ(),
         optEnsuresMarker = Some(ensuresPlaceholder),
         ensures = ISZ()))))
+  }
+
+  @pure def handleMonitor(fn: RAST.FnImpl,
+                          thread: AadlThread,
+                          subclauseInfo: GclAnnexClauseInfo,
+                          types: AadlTypes,
+                          tp: CRustTypeProvider,
+                          symbolTable: SymbolTable,
+                          store: Store,
+                          reporter: Reporter): (ISZ[Marker], RAST.FnImpl) = {
+    val m = Marker.createSlashMarker(GumboRustUtil.GumboMarkers. gumboMonitor)
+    val markers: ISZ[Marker] = ISZ(m)
+    var monitorInputs: ISZ[RAST.Item] = ISZ()
+    monitorInputs = monitorInputs :+ RAST.ItemString(s"""// To-Do: Add R2U2 API calls""")
+    val wrapper = RAST.MarkerWrap(m, monitorInputs, ",\n", Some("\n"))
+    return (markers,
+      fn(body =
+        Some(RAST.MethodBody(ISZ(
+          RAST.BodyItemST(st"""
+                              |${wrapper.prettyST}
+                              |
+                              |log_info("compute entrypoint invoked");
+                              |""")
+        )))))
   }
 
   @pure override def finalizeMicrokit(model: Aadl, options: HamrCli.CodegenOption, types: AadlTypes, symbolTable: SymbolTable, store: Store, reporter: Reporter): (Store, ISZ[Resource]) = {

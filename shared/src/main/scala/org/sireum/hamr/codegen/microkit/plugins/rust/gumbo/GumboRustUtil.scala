@@ -31,6 +31,8 @@ object GumboRustUtil {
 
     val gumboMethods: String = "MARKER GUMBO METHODS"
 
+    val gumboMonitor: String = "MARKER R2U2 MONITOR"
+
     val gumboLibVerus: String = "MARKER GUMBO VERUS MARKER"
     val gumboLibRust: String = "MARKER GUMBO RUST MARKER"
   }
