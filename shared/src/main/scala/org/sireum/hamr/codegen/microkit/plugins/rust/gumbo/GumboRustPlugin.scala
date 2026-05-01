@@ -483,6 +483,7 @@ object GumboRustPlugin {
             threadContributions(
               markers = markers,
               requiresVerus = T,
+              requiresR2U2 = subclauseInfo.annex.compute.nonEmpty,
               appStructDef = structDef,
               appStructImpl = structImpl(items = updatedImplItems),
               crateLevelEntries = annotatedCrateLevelItems,

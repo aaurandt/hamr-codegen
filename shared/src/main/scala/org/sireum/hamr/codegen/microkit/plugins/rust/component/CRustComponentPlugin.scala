@@ -42,6 +42,7 @@ object ComponentContributions {}
 
                                        // items for component/<thread-path>_app.rs
                                        val requiresVerus: B,
+                                       val requiresR2U2: B,
                                        val appModDirectives: ISZ[RAST.Item],
                                        val appUses: ISZ[RAST.Item],
                                        val appStructDef: RAST.StructDef,
@@ -222,6 +223,7 @@ object ComponentContributions {}
         ComponentContributions(
           markers = ISZ(),
           requiresVerus = F,
+          requiresR2U2 = F,
           appModDirectives = modDirectives,
           appUses = uses,
           appStructDef = struct,
@@ -475,6 +477,7 @@ object ComponentContributions {}
               |
               |${RustUtil.verusCargoDependencies(localStore)}
               |
+              |${if (e._2.requiresR2U2) RustUtil.r2u2CargoDependencies(localStore) else ""}
               |
               |[dev-dependencies]
               |lazy_static = "${versions.get("lazy_static").get}"
