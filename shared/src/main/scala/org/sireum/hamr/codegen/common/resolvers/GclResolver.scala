@@ -1693,12 +1693,42 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
         case _ =>
       }
 
+      var resolvedMonitor: Option[GclMonitor] = None()
+      if (s.monitor.nonEmpty) {
+        var resolvedGuarantees: ISZ[GclGuarantee] = ISZ()
+        var seenGuaranteeIds: Set[String] = Set.empty
+        for (guarantees <- s.monitor.get.guarantees) {
+          if (seenGuaranteeIds.contains(guarantees.id)) {
+            reporter.error(guarantees.posOpt, GclResolver.toolName, s"Duplicate spec name: ${guarantees.id}")
+          }
+          seenGuaranteeIds = seenGuaranteeIds + guarantees.id
+
+          val rexp = typeCheckBoolExp(exp = guarantees.exp, context = context, mode = TypeChecker.ModeContext.SpecPost, component = Some(component),
+            params = ISZ(),
+            stateVars = s.state, specFuns = gclMethods,
+            symbolTable = symbolTable, aadlTypes = aadlTypes,
+            scope = scope, typeHierarchy = typeHierarchy, reporter = reporter)
+          val (rexp2, _, apiRefs) = GclResolver.collectSymbols(rexp, RewriteMode.ApiGet, component, F, indexingTypeFingerprints,
+            s.state, gclMethods, symbolTable, reporter)
+          apiReferences = apiReferences ++ apiRefs
+
+          val resolvedExp: AST.Exp = rexp2 match {
+            case MSome(r) => r
+            case _ => rexp
+          }
+          resolvedGuarantees = resolvedGuarantees :+ guarantees(exp = resolvedExp)
+        }
+        resolvedMonitor = Some(s.monitor.get(
+          guarantees = resolvedGuarantees))
+      }
+
       return Some(s(
         methods = resolvedGclMethods,
         invariants = resolvedInvariants,
         initializes = resolvedInitializes,
         integration = resolvedIntegration,
-        compute = resolvedCompute))
+        compute = resolvedCompute,
+        monitor = resolvedMonitor))
 
     }
 
