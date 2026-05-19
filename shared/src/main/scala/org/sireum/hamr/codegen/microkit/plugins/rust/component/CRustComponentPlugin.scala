@@ -424,6 +424,9 @@ object ComponentContributions {}
                 |
                 |}"""
         }
+        if (e._2.requiresR2U2) {
+          uses = uses :+ RAST.Use(ISZ(), RAST.IdentString("crate::component::spec::SPEC"))
+        }
         val content =
           st"""${(for (d <- e._2.appModDirectives) yield d.prettyST, "\n")}
               |
@@ -447,6 +450,7 @@ object ComponentContributions {}
           st"""${CommentTemplate.safeToEditComment_slash}
               |
               |pub mod $modName;
+              |${if (e._2.requiresR2U2) "pub mod spec;" else ""}
               |"""
         val path = s"$componentDir/mod.rs"
         resources = resources :+ ResourceUtil.createResource(path, content, F)
