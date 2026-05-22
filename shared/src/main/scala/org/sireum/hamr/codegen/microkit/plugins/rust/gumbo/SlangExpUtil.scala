@@ -28,6 +28,7 @@ object SlangExpUtil {
     "integration_constraint"
     "initialize_clause"
     "compute_clause"
+    "monitor_clause"
     "datatype_invariant"
     "subclause_function"
     "library_function"

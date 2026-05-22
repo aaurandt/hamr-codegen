@@ -178,6 +178,7 @@ object GumboRustPlugin {
       val threadContributions = componentContributions.componentContributions.get(threadPath).get
       var structDef = threadContributions.appStructDef
       val structImpl = threadContributions.appStructImpl.asInstanceOf[RAST.ImplBase]
+      var r2u2SpecDef = threadContributions.appR2U2SpecDef
       var crateLevelEntries = threadContributions.crateLevelEntries
       val crateDependencies = threadContributions.crateDependencies ++ crateDeps
 
@@ -476,7 +477,7 @@ object GumboRustPlugin {
                 markers = markers ++ tt._1
               }
               if (subclauseInfo.annex.monitor.nonEmpty) {
-                tt = handleComputeMonitor(
+                val (tt_temp, r2u2SpecDef_temp) = handleComputeMonitor(
                   fn = tt._2,
                   thread = thread,
                   subclauseInfo = subclauseInfo,
@@ -485,7 +486,9 @@ object GumboRustPlugin {
                   symbolTable = symbolTable,
                   store = localStore,
                   reporter = reporter)
+                tt = tt_temp
                 markers = markers ++ tt._1
+                r2u2SpecDef = Some(r2u2SpecDef_temp)
               }
               updatedImplItems = updatedImplItems :+ tt._2
             } else {
@@ -514,9 +517,10 @@ object GumboRustPlugin {
             threadContributions(
               markers = markers,
               requiresVerus = T,
-              requiresR2U2 = subclauseInfo.annex.compute.nonEmpty,
+              requiresR2U2 = subclauseInfo.annex.monitor.nonEmpty,
               appStructDef = structDef,
               appStructImpl = structImpl(items = updatedImplItems),
+              appR2U2SpecDef = r2u2SpecDef,
               crateLevelEntries = annotatedCrateLevelItems,
               crateDependencies = crateDependencies)),
         localStore)
@@ -829,19 +833,40 @@ object GumboRustPlugin {
                           tp: CRustTypeProvider,
                           symbolTable: SymbolTable,
                           store: Store,
-                          reporter: Reporter): (ISZ[Marker], RAST.FnImpl) = {
+                          reporter: Reporter): ((ISZ[Marker], RAST.FnImpl), RAST.R2U2SpecDef) = {
+    var specs: RAST.R2U2SpecDef = RAST.R2U2SpecDef(inputs = ISZ(),
+          ftspecs = ISZ(),
+          ptspecs = ISZ()
+    )
+
+    for (r <- subclauseInfo.annex.monitor.get.guarantees) {
+      val spec: RAST.Expr = GumboRustUtil.processGumboSpecC2PO(
+        spec = r,
+        component = thread,
+        context = Context.monitor_clause,
+        isAssumeRequires = F,
+        types = types,
+        tp = tp,
+        gclSymbolTable = subclauseInfo.gclSymbolTable,
+        store = store,
+        reporter = reporter)
+      specs = specs(ftspecs = specs.ftspecs :+ RAST.ItemST(spec.prettyST))
+    }
+
+
+
     val m = Marker.createSlashMarker(GumboRustUtil.GumboMarkers. gumboMonitor)
     val markers: ISZ[Marker] = ISZ(m)
     var monitorInputs: ISZ[RAST.Item] = ISZ()
     monitorInputs = monitorInputs :+ RAST.ItemString(s"""// To-Do: Add R2U2 API calls""")
     val wrapper = RAST.MarkerWrap(m, monitorInputs, ",\n", Some("\n"))
-    return (markers,
+    return ((markers,
       fn(body =
         Some(RAST.MethodBody(ISZ(
           RAST.BodyItemST(st"""${wrapper.prettyST}
                               |
                               |${if (fn.body.nonEmpty) fn.body.get.prettyST else ""}""")
-        )))))
+        ))))), specs)
   }
 
   @pure override def finalizeMicrokit(model: Aadl, options: HamrCli.CodegenOption, types: AadlTypes, symbolTable: SymbolTable, store: Store, reporter: Reporter): (Store, ISZ[Resource]) = {

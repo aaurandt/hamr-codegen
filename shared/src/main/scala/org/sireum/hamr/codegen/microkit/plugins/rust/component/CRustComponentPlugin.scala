@@ -47,6 +47,7 @@ object ComponentContributions {}
                                        val appUses: ISZ[RAST.Item],
                                        val appStructDef: RAST.StructDef,
                                        val appStructImpl: RAST.Impl,
+                                       val appR2U2SpecDef: Option[RAST.R2U2SpecDef],
 
                                        val crateLevelEntries: ISZ[RAST.Item],
 
@@ -189,6 +190,8 @@ object ComponentContributions {}
         items = ISZ[RAST.Item](newFn, initFn) ++ entrypointFns :+ notify,
         comments = ISZ(), attributes = ISZ(), implIdent = None())
 
+      val r2u2Spec: Option[RAST.R2U2SpecDef] = None()
+
       var funcs: ISZ[RAST.Item] = ISZ()
 
       funcs = funcs :+ RAST.FnImpl(
@@ -228,6 +231,7 @@ object ComponentContributions {}
           appUses = uses,
           appStructDef = struct,
           appStructImpl = impl,
+          appR2U2SpecDef = r2u2Spec,
           crateLevelEntries = funcs,
           crateDependencies = ISZ())
 
@@ -454,6 +458,31 @@ object ComponentContributions {}
               |"""
         val path = s"$componentDir/mod.rs"
         resources = resources :+ ResourceUtil.createResource(path, content, F)
+      }
+
+      { // src/monitor/spec.c2po + src/monitor/spec.map
+        if (e._2.requiresR2U2){
+          val content =
+            st"""${CommentTemplate.doNotEditComment_c2po}
+                 |
+                 |${e._2.appR2U2SpecDef.get.prettyST}
+                 |"""
+          val path = s"$componentDir/spec.c2po"
+          resources = resources :+ ResourceUtil.createResource(path, content, T)
+        }
+      }
+
+      { // src/monitor/spec.rs
+        if (e._2.requiresR2U2){
+          val content =
+            st"""${CommentTemplate.doNotEditComment_slash}
+                 |
+                 |pub const SPEC: [u8; 1] = [
+                 |0x01
+                 |];"""
+          val path = s"$componentDir/spec.rs"
+          resources = resources :+ ResourceUtil.createResource(path, content, T)
+        }
       }
 
       { // Cargo.toml
