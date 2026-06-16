@@ -1758,6 +1758,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
         }
         resolvedMonitor = Some(s.monitor.get(
           guarantees = resolvedGuarantees))
+      }
       var resolvedCompositions: ISZ[GclComposition] = ISZ()
       var compositionIds: Set[String] = Set.empty
       for (comp <- s.compositions) {
