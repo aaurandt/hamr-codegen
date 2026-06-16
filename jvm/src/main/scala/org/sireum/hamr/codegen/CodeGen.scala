@@ -12,7 +12,7 @@ import org.sireum.hamr.codegen.common.symbols.SymbolTable
 import org.sireum.hamr.codegen.common.types.AadlTypes
 import org.sireum.hamr.codegen.common.util.HamrCli.{CodegenHamrPlatform, CodegenOption}
 import org.sireum.hamr.codegen.common.util.ModelUtil.ModelElements
-import org.sireum.hamr.codegen.common.util.{CodeGenResults, ExperimentalOptions, ModelUtil, MonitorInjector}
+import org.sireum.hamr.codegen.common.util.{CodeGenResults, ExperimentalOptions, ModelUtil}
 import org.sireum.hamr.codegen.common.{DirectoryUtil, StringUtil}
 import org.sireum.hamr.codegen.microkit.MicrokitCodegen
 import org.sireum.hamr.codegen.microkit.util.{JvmMicrokitUtil, MicrokitUtil}
@@ -70,10 +70,13 @@ object CodeGen {
     val systemRootDirectory: Os.Path = getSystemRoot(model, modOptions.workspaceRootDir)
 
     def getPath(path: String): Os.Path = {
+      /*
       val p = Os.path(path)
       return (
         if (p.isAbs) p // use the abs path the user requested
         else systemRootDirectory / path) // make the user's request relative to the system's root directory
+       */
+      return Os.path(path)
     }
 
     val outputDir: Path = getPath(modOptions.outputDir.getOrElse("hamr"))
@@ -157,8 +160,8 @@ object CodeGen {
     while (continue) {
       var somethingHandled = F
       for (plugin <- modelTransformerPlugins if continue) {
-        if (plugin.canHandleModelTransform(model, options, aadlTypes, symbolTable, localStore, reporter)) {
-          plugin.handleModelTransform(model, options, aadlTypes, symbolTable, localStore, reporter) match {
+        if (plugin.canHandleModelTransform(rmodel, options, aadlTypes, symbolTable, localStore, reporter)) {
+          plugin.handleModelTransform(rmodel, options, aadlTypes, symbolTable, localStore, reporter) match {
             case Some((ustore, uaadl, uaadlTypes, usymTable))=>
               localStore = ustore
               rmodel = uaadl

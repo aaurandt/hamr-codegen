@@ -9,12 +9,13 @@ import org.sireum.hamr.codegen.common.plugin.Plugin
 import org.sireum.hamr.codegen.common.reporting.{CodegenReporting, CodegenReports, JSON, ResourceReport, Status, ToolReport}
 import org.sireum.hamr.codegen.common.symbols.{AadlDataPort, AadlEventDataPort, AadlEventPort, AadlPort, AadlThread, SymbolTable}
 import org.sireum.hamr.codegen.common.types.AadlTypes
-import org.sireum.hamr.codegen.common.util.{CodeGenResults, HamrCli, MonitorInjector}
+import org.sireum.hamr.codegen.common.util.{CodeGenResults, HamrCli}
+import org.sireum.hamr.codegen.microkit.plugins.StoreUtil
+import org.sireum.hamr.codegen.microkit.plugins.gumbo.GumboRustUtil
 import org.sireum.hamr.codegen.microkit.plugins.reporting.CContainers.CFile
 import org.sireum.hamr.codegen.microkit.plugins.reporting.MSDContainers.system
 import org.sireum.hamr.codegen.microkit.plugins.reporting.RustContainers.RustFile
 import org.sireum.hamr.codegen.microkit.plugins.rust.component.CRustComponentPlugin
-import org.sireum.hamr.codegen.microkit.plugins.rust.gumbo.GumboRustUtil
 import org.sireum.hamr.codegen.microkit.reporting._
 import org.sireum.hamr.codegen.microkit.util.MicrokitUtil
 import org.sireum.hamr.ir.{Aadl, Direction, GclAssume, GclGuarantee, GclSubclause}
@@ -35,9 +36,14 @@ object MicrokitReporterPlugin {
   @pure override def canFinalize(model: Aadl, aadlTypes: Option[AadlTypes], symbolTable: Option[SymbolTable], codegenResults: CodeGenResults, store: Store, options: HamrCli.CodegenOption, reporter: Reporter): B = {
     return (
       !reporter.hasError &&
-      !hasFinalized(store) &&
+        !hasFinalized(store) &&
         options.platform == HamrCli.CodegenHamrPlatform.Microkit &&
-      symbolTable.nonEmpty)
+
+        // TODO
+        !options.verusAttributeSyntax &&
+
+
+        symbolTable.nonEmpty)
   }
 
   @pure override def finalizePlugin(model: Aadl,
@@ -142,7 +148,7 @@ object MicrokitReporterPlugin {
 
     var componentReports: HashSMap[IdPathR, ComponentReport] = HashSMap.empty
 
-    for (t <- symbolTable.get.getThreads() if t.identifier != MonitorInjector.monitorThreadId) {
+    for (t <- symbolTable.get.getThreads() if !StoreUtil.isNonModelElement(t.path, localStore)) {
 
       var ports: HashSMap[IdPathR, PortReport] = HashSMap.empty
 
@@ -155,8 +161,8 @@ object MicrokitReporterPlugin {
 
       val protectionDomain = msd.getProtectionDomain(threadid).get.protection_domains(0)
 
-      val inPorts = t.getPorts().filter(p => p.direction == Direction.In)
-      val outPorts = t.getPorts().filter(p => p.direction == Direction.Out)
+      val inPorts = t.getPorts().filter(p => p.direction == Direction.In && !StoreUtil.isNonModelElement(p.path, localStore))
+      val outPorts = t.getPorts().filter(p => p.direction == Direction.Out && !StoreUtil.isNonModelElement(p.path, localStore))
 
       val cComponentDir = sel4OutputDir / "components" / threadid / "src"
       assert(cComponentDir.exists, cComponentDir.value)
@@ -207,13 +213,15 @@ object MicrokitReporterPlugin {
           case x => halt(s"Didn't find a unique map for ${key}: Found ${x.size} in $x")
         }
 
-        ports = ports + IdPathR(p.path) ~> PortReport(
-          name = p.path,
-          kind = kind,
-          direction = direction,
-          payload = payload,
-          modelPos = ReportUtil.buildPosA(p.feature.identifier.pos.get, workspaceRoot, sel4OutputDir),
-          languageRealizations = realizations)
+        if (p.feature.identifier.pos.nonEmpty) {
+          ports = ports + IdPathR(p.path) ~> PortReport(
+            name = p.path,
+            kind = kind,
+            direction = direction,
+            payload = payload,
+            modelPos = ReportUtil.buildPosA(p.feature.identifier.pos.get, workspaceRoot, sel4OutputDir),
+            languageRealizations = realizations)
+        }
       }
 
       for (i <- inPorts) {
@@ -273,7 +281,7 @@ object MicrokitReporterPlugin {
 
         { // process api artifacts
           @pure def addPath(pports: ISZ[AadlPort], rustImpl: RustContainers.RustImpl, rustTrait: RustContainers.RustTrait): Unit = {
-            for (p <- pports) {
+            for (p <- pports if !StoreUtil.isNonModelElement(p.path, localStore)) {
               val typ: String = if (p.direction == Direction.In) "get" else "put"
 
               val fn1 = rustImpl.methods.get(s"${typ}_${p.identifier}").get
@@ -517,7 +525,7 @@ object MicrokitReporterPlugin {
 
     var behaviorCodeReports: ISZ[ST] = ISZ()
 
-    for (t <- symbolTable.getThreads() if t.identifier != MonitorInjector.monitorThreadId) {
+    for (t <- symbolTable.getThreads() if !StoreUtil.isNonModelElement(t.path, store)) {
       val classifier = t.classifier
       assert (classifier.size == 2)
 

@@ -46,7 +46,7 @@ object GclResolverUtil {
           case "Data_Boolean" => "B"
 
           case x =>
-            reporter.error(b.container.get.identifier.pos, GclResolver.toolName, s"Wasn't expecting $simpleName while trying to get Slang type name")
+            GclResolver.reportError(b.container.get.identifier.pos, s"Wasn't expecting $simpleName while trying to get Slang type name", reporter)
             "String"
         }
         return ISZ("org", "sireum", simpleSireumName)
@@ -186,7 +186,7 @@ object GclResolverUtil {
     if (o.ident.id.value == "apply") {
       o.receiverOpt match {
         case Some(i: Exp.Invoke) =>
-          assert(i.receiverOpt.isEmpty, "Need to handle non-empty receivers")
+          //assert(i.receiverOpt.isEmpty, "Need to handle non-empty receivers")
           //assert(i.args.isEmpty, "Need to rewrite invoke args for apply")
           val identv = i.ident.id.value
           scope.resolveName(typeHierarchy.nameMap, ISZ(identv)) match {
@@ -200,7 +200,7 @@ object GclResolverUtil {
                 case x => halt(s"Unexpected: ${x}")
               }
             case x =>
-              reporter.error(o.posOpt, GclResolver.toolName, s"Could not resolve '$identv'")
+              GclResolver.reportError(o.posOpt, s"Could not resolve '$identv'", reporter)
           }
         case Some(Exp.Input(AST.Exp.Ident(id))) =>
           // only state vars can be wrapped in In
@@ -245,7 +245,7 @@ object GclResolverUtil {
                     case _ =>
                   }
                 case _ =>
-                  reporter.error(o.posOpt, GclResolver.toolName, s"'${o.ident.id.value}' is not a field of ${r.name}")
+                  GclResolver.reportError(o.posOpt, s"'${o.ident.id.value}' is not a field of ${r.name}", reporter)
               }
 
             case x =>
@@ -361,7 +361,7 @@ object GclResolverUtil {
             currType = None()
             pushType(fieldType)
           case _ =>
-            reporter.error(o.posOpt, GclResolver.toolName, s"'${o.id.value}' is a not a field of ${r.name}")
+            GclResolver.reportError(o.posOpt, s"'${o.id.value}' is a not a field of ${r.name}", reporter)
         }
         return org.sireum.hamr.ir.MTransformer.PreResult(F, MNone())
       case _ =>

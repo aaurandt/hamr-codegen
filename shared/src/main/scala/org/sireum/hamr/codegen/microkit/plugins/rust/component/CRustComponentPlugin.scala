@@ -37,22 +37,21 @@ object CRustComponentPlugin {
 
 object ComponentContributions {}
 
-@datatype class ComponentContributions(// markers for component/<thread-path>_app.rs
-                                       val markers: ISZ[Marker],
+@datatype class ComponentContributions( // markers for component/<thread-path>_app.rs
+                                        val markers: ISZ[Marker],
 
-                                       // items for component/<thread-path>_app.rs
-                                       val requiresVerus: B,
-                                       val requiresR2U2: B,
-                                       val appModDirectives: ISZ[RAST.Item],
-                                       val appUses: ISZ[RAST.Item],
-                                       val appStructDef: RAST.StructDef,
-                                       val appStructImpl: RAST.Impl,
-                                       val appR2U2SpecDef: Option[RAST.R2U2SpecDef],
+                                        // items for component/<thread-path>_app.rs
+                                        val requiresVerus: B,
+                                        val requiresR2U2: B,
+                                        val appModDirectives: ISZ[RAST.Item],
+                                        val appUses: ISZ[RAST.Item],
+                                        val appStructDef: RAST.StructDef,
+                                        val appStructImpl: RAST.Impl,
+                                        val appR2U2SpecDef: Option[RAST.R2U2SpecDef],
+                                        val moduleLevelEntries: ISZ[RAST.Item],
 
-                                       val crateLevelEntries: ISZ[RAST.Item],
-
-                                       // items for Cargo.toml's [dependencies] table
-                                       val crateDependencies: ISZ[ST])
+                                        // items for Cargo.toml's [dependencies] table
+                                        val crateDependencies: ISZ[ST])
 
 @sig trait CRustComponentContributions extends StoreValue {
   @pure def componentContributions: Map[IdPath, ComponentContributions]
@@ -116,7 +115,8 @@ object ComponentContributions {}
           ident = RAST.IdentString("new"),
           fnDecl = RAST.FnDecl(inputs = ISZ(), outputs = RAST.FnRetTyImpl(RAST.TyPath(ISZ(ISZ("Self")), None()))),
           verusHeader = None(), fnHeader = RAST.FnHeader(F), generics = None()),
-        comments = ISZ(), attributes = ISZ(), visibility = RAST.Visibility.Public, contract = None(), meta = ISZ(),
+        comments = ISZ(), attributes = ISZ(), visibility = RAST.Visibility.Public, meta = ISZ(),
+        verusAttributeSyntax = options.verusAttributeSyntax, contract = None(),
         body = Some(RAST.MethodBody(ISZ(RAST.BodyItemSelf(ISZ())))))
 
       val initFn = RAST.FnImpl(
@@ -136,7 +136,8 @@ object ComponentContributions {}
             ),
             outputs = RAST.FnRetTyDefault()),
           verusHeader = None(), fnHeader = RAST.FnHeader(F)),
-        comments = ISZ(), attributes = ISZ(), visibility = RAST.Visibility.Public, contract = None(), meta = ISZ(),
+        comments = ISZ(), attributes = ISZ(), visibility = RAST.Visibility.Public, meta = ISZ(),
+        verusAttributeSyntax = options.verusAttributeSyntax, contract = None(),
         body = Some(RAST.MethodBody(ISZ(
           RAST.BodyItemST(
             st"""log_info("initialize entrypoint invoked");""")))))
@@ -160,7 +161,8 @@ object ComponentContributions {}
                 ),
                 outputs = RAST.FnRetTyDefault()),
               verusHeader = None(), fnHeader = RAST.FnHeader(F)),
-            comments = ISZ(), attributes = ISZ(), visibility = RAST.Visibility.Public, contract = None(), meta = ISZ(),
+            comments = ISZ(), attributes = ISZ(), visibility = RAST.Visibility.Public, meta = ISZ(),
+            verusAttributeSyntax = options.verusAttributeSyntax, contract = None(),
             body = Some(RAST.MethodBody(ISZ(RAST.BodyItemST(
               st"""log_info("compute entrypoint invoked");"""))))))
         else ISZ(RAST.CommentNonDoc(ISZ(st"NOT YET FOR SPORADIC")))
@@ -176,7 +178,8 @@ object ComponentContributions {}
                 kind = RAST.TyPath(ISZ(ISZ("microkit_channel")), None()))),
             outputs = RAST.FnRetTyDefault()),
           verusHeader = None(), fnHeader = RAST.FnHeader(F), generics = None()),
-        comments = ISZ(), contract = None(), visibility = RAST.Visibility.Public, attributes = ISZ(), meta = ISZ(),
+        comments = ISZ(), visibility = RAST.Visibility.Public, attributes = ISZ(), meta = ISZ(),
+        verusAttributeSyntax = options.verusAttributeSyntax, contract = None(),
         body = Some(RAST.MethodBody(ISZ(RAST.BodyItemST(
           st"""// this method is called when the monitor does not handle the passed in channel
               |match channel {
@@ -204,7 +207,8 @@ object ComponentContributions {}
                 kind = RAST.TyPath(ISZ(ISZ("&str")), None()))),
             outputs = RAST.FnRetTyDefault()),
           verusHeader = None(), fnHeader = RAST.FnHeader(F), generics = None()),
-        comments = ISZ(), contract = None(), visibility = RAST.Visibility.Public, attributes = ISZ(), meta = ISZ(),
+        comments = ISZ(), visibility = RAST.Visibility.Public, attributes = ISZ(), meta = ISZ(),
+        verusAttributeSyntax = options.verusAttributeSyntax, contract = None(),
         body = Some(RAST.MethodBody(ISZ(RAST.BodyItemST(
           st"""log::info!("{0}", msg);""")))))
 
@@ -218,7 +222,8 @@ object ComponentContributions {}
                 kind = RAST.TyPath(ISZ(ISZ("u32")), None()))),
             outputs = RAST.FnRetTyDefault()),
           verusHeader = None(), fnHeader = RAST.FnHeader(F), generics = None()),
-        comments = ISZ(), contract = None(), visibility = RAST.Visibility.Public, attributes = ISZ(), meta = ISZ(),
+        comments = ISZ(), visibility = RAST.Visibility.Public, attributes = ISZ(), meta = ISZ(),
+        verusAttributeSyntax = options.verusAttributeSyntax, contract = None(),
         body = Some(RAST.MethodBody(ISZ(RAST.BodyItemST(
           st"""log::warn!("Unexpected channel: {0}", channel);""")))))
 
@@ -232,7 +237,7 @@ object ComponentContributions {}
           appStructDef = struct,
           appStructImpl = impl,
           appR2U2SpecDef = r2u2Spec,
-          crateLevelEntries = funcs,
+          moduleLevelEntries = funcs,
           crateDependencies = ISZ())
 
       makefileTestEntries = makefileTestEntries :+ st"make -C $${CRATES_DIR}/$threadId test"
@@ -411,22 +416,17 @@ object ComponentContributions {}
               |
               |${e._2.appStructImpl.prettyST}"""
 
-        if (e._2.crateLevelEntries.nonEmpty) {
+        if (e._2.moduleLevelEntries.nonEmpty) {
           body =
             st"""$body
                 |
-                |${(for(f <- e._2.crateLevelEntries) yield f.prettyST, "\n\n")}"""
+                |${(for(f <- e._2.moduleLevelEntries) yield f.prettyST, "\n\n")}"""
         }
 
-        if (e._2.requiresVerus) {
-          uses = uses :+ RAST.Use(ISZ(), RAST.IdentString("vstd::prelude::*"))
-
-          body =
-            st"""verus! {
-                |
-                |  $body
-                |
-                |}"""
+        if (e._2.requiresVerus && !options.verusAttributeSyntax) {
+          body = RAST.MacCall(
+            macName = "verus",
+            items = ISZ(RAST.ItemST(body))).prettyST
         }
         if (e._2.requiresR2U2) {
           uses = uses :+ RAST.Use(ISZ(), RAST.IdentString("crate::component::spec::SPEC"))

@@ -34,7 +34,7 @@ import org.sireum.message.Reporter
 
   override def canHandle(model: Aadl, options: HamrCli.CodegenOption, types: AadlTypes, symbolTable: SymbolTable, store: Store, reporter: Reporter): B = {
     return super.canHandle(model, options, types, symbolTable, store, reporter) &&
-      CComponentPlugin.getSchedulingType(symbolTable.rootSystem) == Hamr_Microkit_Properties.SchedulingType.Domain_Scheduling
+      !MicrokitUtil.isMCS(options, symbolTable.rootSystem)
   }
 
   override def handle(model: Aadl, options: HamrCli.CodegenOption, types: AadlTypes, symbolTable: SymbolTable, store: Store, reporter: Reporter): (Store, ISZ[Resource]) = {
@@ -71,14 +71,18 @@ import org.sireum.message.Reporter
       xmlProtectionDomains = xmlProtectionDomains :+
         ProtectionDomain(
           name = pacerName,
-          schedulingDomain = Some(pacerSchedulingDomain),
-          id = None(),
+          programImage = s"${pacerName}.elf",
+          priority = None(),
+          budget = None(),
+          period = None(),
+          passive = None(),
           stackSizeInKiBytes = None(),
+          cpu = None(),
+          id = None(),
+          smc = None(),
+          schedulingDomain = Some(pacerSchedulingDomain),
           memMaps = ISZ(),
           irqs = ISZ(),
-          programImage = s"${pacerName}.elf",
-          smc = None(),
-          passive = None(),
           children = ISZ())
 
       portPacerToEndOfFrame = getNextPacerChannelId
@@ -166,7 +170,7 @@ import org.sireum.message.Reporter
         case _ => defaultComputeExecutionTime
       }
 
-      val isUserPartition = !StoreUtil.isPluginGeneratedComponent(t.path, localStore)
+      val isUserPartition = !StoreUtil.isNonModelElement(t.path, localStore)
 
       xmlSchedulingDomains = xmlSchedulingDomains :+
         SchedulingDomain(id = schedulingDomain, componentName = threadMonId.render, length = computeExecutionTime, isUserPartition = isUserPartition)
@@ -176,7 +180,7 @@ import org.sireum.message.Reporter
 
       var vms: ISZ[MicrokitDomain] = ISZ()
       if (isVM) {
-        val vmName = threadId
+        val vmName = s"${threadId}_VM"
 
         val guestRam = VirtualMachineMemoryRegion(
           typ = VirtualMemoryRegionType.RAM,
@@ -306,27 +310,35 @@ import org.sireum.message.Reporter
       val child =
         ProtectionDomain(
           name = threadId,
-          schedulingDomain = Some(schedulingDomain),
-          id = Some(s"1"),
+          programImage = mk.elfName,
+          priority = None(),
+          budget = None(),
+          period = None(),
+          passive = Hamr_Microkit_Properties.getPassive(t.properties),
           stackSizeInKiBytes = childStackSizeInKiBytes,
+          cpu = None(),
+          id = Some(s"1"),
+          smc = Hamr_Microkit_Properties.getSmc(t.properties),
+          schedulingDomain = Some(schedulingDomain),
           memMaps = childMemMaps,
           irqs = childIrqs,
-          programImage = mk.elfName,
-          smc = Hamr_Microkit_Properties.getSmc(t.properties),
-          passive = Hamr_Microkit_Properties.getPassive(t.properties),
           children = vms)
 
       xmlProtectionDomains = xmlProtectionDomains :+
         ProtectionDomain(
           name = threadMonId.render,
-          schedulingDomain = Some(schedulingDomain),
-          id = None(),
+          programImage = mk.monElfName,
+          priority = None(),
+          budget = None(),
+          period = None(),
+          passive = None(),
           stackSizeInKiBytes = None(),
+          cpu = None(),
+          id = None(),
+          smc = None(),
+          schedulingDomain = Some(schedulingDomain),
           memMaps = ISZ(),
           irqs = ISZ(),
-          programImage = mk.monElfName,
-          smc = None(),
-          passive = None(),
           children = ISZ(child))
 
       val pacerChannelId = getNextPacerChannelId
@@ -526,7 +538,10 @@ import org.sireum.message.Reporter
     val pacerSlot = SchedulingDomain(id = pacerSchedulingDomain, componentName = "pacer", length = pacerComputeExecutionTime, isUserPartition = F)
     val componentCount = xmlSchedulingDomains.size
 
-    usedBudget = usedBudget + (componentCount * pacerComputeExecutionTime)
+    val componentUsage = usedBudget
+    val pacerUsage = componentCount * pacerComputeExecutionTime
+
+    usedBudget = usedBudget + pacerUsage
 
     val boundProcessors = symbolTable.getAllActualBoundProcessors()
     assert(boundProcessors.size == 1, "Linter should have ensured there is exactly one bound processor")
@@ -538,7 +553,7 @@ import org.sireum.message.Reporter
     }
 
     if (usedBudget > framePeriod && !options.runtimeMonitoring) {
-      reporter.error(None(), toolName, s"Frame period ${framePeriod} is too small for the used budget ${usedBudget}")
+      reporter.error(None(), toolName, s"Frame period ${framePeriod}ms is too small for the used budget ${usedBudget}ms (${componentUsage} for components, ${pacerUsage}ms for Pacer)")
       return (localStore, resources)
     }
 
@@ -563,7 +578,8 @@ import org.sireum.message.Reporter
       schedulingDomains = xmlScheds,
       protectionDomains = xmlProtectionDomains,
       memoryRegions = xmlMemoryRegions,
-      channels = xmlChannels)
+      channels = xmlChannels,
+      templateContributions = ISZ())
     localStore = SystemDescriptionProviderPlugin.putMSD(normalName, normalSd, localStore)
 
     localStore = StoreUtil.addMakefileContainers(makefileContainers, localStore)

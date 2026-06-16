@@ -4,14 +4,14 @@ package org.sireum.hamr.codegen.microkit.plugins.rust.apis
 import org.sireum._
 import org.sireum.hamr.codegen.common.CommonUtil.{BoolValue, IdPath, Store, StoreValue}
 import org.sireum.hamr.codegen.common.containers.Resource
-import org.sireum.hamr.codegen.common.symbols.{AadlThread, SymbolTable}
+import org.sireum.hamr.codegen.common.symbols.{AadlPort, AadlThread, SymbolTable}
 import org.sireum.hamr.codegen.common.templates.CommentTemplate
 import org.sireum.hamr.codegen.common.types.AadlTypes
 import org.sireum.hamr.codegen.common.util.HamrCli.CodegenHamrPlatform
 import org.sireum.hamr.codegen.common.util.{HamrCli, ResourceUtil}
 import org.sireum.hamr.codegen.microkit.plugins.rust.component.CRustComponentPlugin
 import org.sireum.hamr.codegen.microkit.plugins.rust.types.CRustTypePlugin
-import org.sireum.hamr.codegen.microkit.plugins.{MicrokitFinalizePlugin, MicrokitPlugin}
+import org.sireum.hamr.codegen.microkit.plugins.{MicrokitFinalizePlugin, MicrokitPlugin, StoreUtil}
 import org.sireum.hamr.codegen.microkit.util.MicrokitUtil
 import org.sireum.hamr.codegen.microkit.{rust => RAST}
 import org.sireum.hamr.ir.{Aadl, Direction}
@@ -138,11 +138,28 @@ object ComponentApiContributions {
       if (MicrokitUtil.isRusty(srcThread)) {
         var contributions = ComponentApiContributions.empty
 
-        for (inPort <- srcThread.getPorts().filter(p => p.direction == Direction.In)) {
-          contributions = contributions.combine(CRustApiUtil.processInPort(srcThread, inPort, crustTypeProvider))
+        val apiPorts: ISZ[AadlPort] = srcThread.getPorts().filter((p: AadlPort) =>
+          !StoreUtil.isNonModelElement(p.path, localStore))
+
+        for (inPort <- apiPorts.filter((p: AadlPort) => p.direction == Direction.In)) {
+          contributions = contributions.combine(CRustApiUtil.processInPort(srcThread, inPort, crustTypeProvider, apiPorts))
         }
-        for (outPort <- srcThread.getPorts().filter(p => p.direction == Direction.Out)) {
-          contributions = contributions.combine(CRustApiUtil.processOutPort(srcThread, outPort, crustTypeProvider))
+        for (outPort <- apiPorts.filter((p: AadlPort) => p.direction == Direction.Out)) {
+          contributions = contributions.combine(CRustApiUtil.processOutPort(srcThread, outPort, crustTypeProvider, apiPorts))
+        }
+
+        for (svPort <- srcThread.getPorts().filter((p: AadlPort) =>
+          StoreUtil.isNonModelElement(p.path, localStore))) {
+          val full: ComponentApiContributions = if (svPort.direction == Direction.In) {
+            CRustApiUtil.processInPort(srcThread, svPort, crustTypeProvider, apiPorts)
+          } else {
+            CRustApiUtil.processOutPort(srcThread, svPort, crustTypeProvider, apiPorts )
+          }
+          contributions = contributions.combine(ComponentApiContributions.empty(
+            externCApis = full.externCApis,
+            unsafeExternCApiWrappers = full.unsafeExternCApiWrappers,
+            externApiTestMockVariables = full.externApiTestMockVariables,
+            externApiTestingApis = full.externApiTestingApis))
         }
 
         ret = ret + srcThread.path ~> contributions
@@ -218,6 +235,62 @@ object ComponentApiContributions {
         val appInterfaceName = CRustApiPlugin.applicationApiType(thread)
         val initApiTypeName = CRustApiPlugin.initializationApiType(thread)
         val computeApiTypeName = CRustApiPlugin.computeApiType(thread)
+
+        // TODO: switch to verus attribute syntax once ghost struct fields and (res : Type)
+        //   return-value naming have attribute-syntax equivalents
+        val macCall = RAST.MacCall(macName = "verus", items = ISZ(RAST.ItemST(
+          st"""pub trait $apiTraitName {}
+              |
+              |pub trait $apiPutTraitName: $apiTraitName {
+              |  ${(for (f <- c._2.unverifiedPutApis) yield f.prettyST, "\n\n")}
+              |}
+              |
+              |pub trait $apiGetTraitName: $apiTraitName {
+              |  ${(for (f <- c._2.unverifiedGetApis) yield f.prettyST, "\n\n")}
+              |}
+              |
+              |pub trait $apiFullTraitName: $apiPutTraitName + $apiGetTraitName {}
+              |
+              |pub struct $appInterfaceName<API: $apiTraitName> {
+              |  pub api: API,
+              |
+              |  ${(for (g <- c._2.ghostVariables) yield g.prettyST, ",\n")}
+              |}
+              |
+              |impl<API: $apiPutTraitName> $appInterfaceName<API> {
+              |  ${(for (f <- c._2.appApiDefaultPutters) yield f.prettyST)}
+              |}
+              |
+              |impl<API: $apiGetTraitName> $appInterfaceName<API> {
+              |  ${(for (f <- c._2.appApiDefaultGetters) yield f.prettyST)}
+              |}
+              |
+              |pub struct $initApiTypeName;
+              |impl $apiTraitName for $initApiTypeName {}
+              |impl $apiPutTraitName for $initApiTypeName {}
+              |
+              |pub const fn init_api() -> $appInterfaceName<$initApiTypeName> {
+              |  return $appInterfaceName {
+              |    api: $initApiTypeName {},
+              |
+              |    ${(for (g <- c._2.ghostInitializations) yield g.prettyST, ",\n")}
+              |  }
+              |}
+              |
+              |pub struct $computeApiTypeName;
+              |impl $apiTraitName for $computeApiTypeName {}
+              |impl $apiPutTraitName for $computeApiTypeName {}
+              |impl $apiGetTraitName for $computeApiTypeName {}
+              |impl $apiFullTraitName for $computeApiTypeName {}
+              |
+              |pub const fn compute_api() -> $appInterfaceName<$computeApiTypeName> {
+              |  return $appInterfaceName {
+              |    api: $computeApiTypeName {},
+              |
+              |    ${(for (g <- c._2.ghostInitializations) yield g.prettyST, ",\n")}
+              |  }
+              |}""")))
+
         val content =
           st"""${CommentTemplate.doNotEditComment_slash}
               |
@@ -225,59 +298,8 @@ object ComponentApiContributions {
               |use ${CRustTypePlugin.usePath};
               |use super::extern_c_api as extern_api;
               |
-              |verus! {
-              |  pub trait $apiTraitName {}
-              |
-              |  pub trait $apiPutTraitName: $apiTraitName {
-              |    ${(for(f <- c._2.unverifiedPutApis) yield f.prettyST, "\n\n")}
-              |  }
-              |
-              |  pub trait $apiGetTraitName: $apiTraitName {
-              |    ${(for(f <- c._2.unverifiedGetApis) yield f.prettyST, "\n\n")}
-              |  }
-              |
-              |  pub trait $apiFullTraitName: $apiPutTraitName + $apiGetTraitName {}
-              |
-              |  pub struct $appInterfaceName<API: $apiTraitName> {
-              |    pub api: API,
-              |
-              |    ${(for (g <- c._2.ghostVariables) yield g.prettyST, ",\n")}
-              |  }
-              |
-              |  impl<API: $apiPutTraitName> $appInterfaceName<API> {
-              |    ${(for(f <- c._2.appApiDefaultPutters) yield f.prettyST)}
-              |  }
-              |
-              |  impl<API: $apiGetTraitName> $appInterfaceName<API> {
-              |    ${(for(f <- c._2.appApiDefaultGetters) yield f.prettyST)}
-              |  }
-              |
-              |  pub struct $initApiTypeName;
-              |  impl $apiTraitName for $initApiTypeName {}
-              |  impl $apiPutTraitName for $initApiTypeName {}
-              |
-              |  pub const fn init_api() -> $appInterfaceName<$initApiTypeName> {
-              |    return $appInterfaceName {
-              |      api: $initApiTypeName {},
-              |
-              |      ${(for (g <- c._2.ghostInitializations) yield g.prettyST, ",\n")}
-              |    }
-              |  }
-              |
-              |  pub struct $computeApiTypeName;
-              |  impl $apiTraitName for $computeApiTypeName {}
-              |  impl $apiPutTraitName for $computeApiTypeName {}
-              |  impl $apiGetTraitName for $computeApiTypeName {}
-              |  impl $apiFullTraitName for $computeApiTypeName {}
-              |
-              |  pub const fn compute_api() -> $appInterfaceName<$computeApiTypeName> {
-              |    return $appInterfaceName {
-              |      api: $computeApiTypeName {},
+              |${macCall.prettyST}"""
 
-              |      ${(for (g <- c._2.ghostInitializations) yield g.prettyST, ",\n")}
-              |    }
-              |  }
-              |}"""
         val path = s"$bridgeDir/${CRustApiPlugin.apiModuleName(thread)}.rs"
         resources = resources :+ ResourceUtil.createResource(path, content, T)
       }

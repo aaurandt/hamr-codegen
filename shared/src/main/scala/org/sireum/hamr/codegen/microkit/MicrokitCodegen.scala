@@ -9,7 +9,7 @@ import org.sireum.hamr.codegen.common.properties.Hamr_Microkit_Properties
 import org.sireum.hamr.codegen.common.symbols.SymbolTable
 import org.sireum.hamr.codegen.common.types.AadlTypes
 import org.sireum.hamr.codegen.common.util.HamrCli.CodegenOption
-import org.sireum.hamr.codegen.common.util.{CodeGenResults, ModelUtil, MonitorInjector, ResourceUtil}
+import org.sireum.hamr.codegen.common.util.{CodeGenResults, ModelUtil, ResourceUtil}
 import org.sireum.hamr.codegen.microkit.plugins.c.components.CComponentPlugin
 import org.sireum.hamr.codegen.microkit.plugins.c.connections.CConnectionProviderPlugin
 import org.sireum.hamr.codegen.microkit.plugins._
@@ -115,8 +115,7 @@ object MicrokitCodegen {
 
     val elfEntries: Set[String] = Set.empty[String] ++ (for (mk <- makefileContainers) yield mk.elfEntry.render)
 
-    val isMCS = CComponentPlugin.getSchedulingType(symbolTable.rootSystem) == Hamr_Microkit_Properties.SchedulingType.MCS
-
+    val isMCS = MicrokitUtil.isMCS(options, symbolTable.rootSystem)
 
 
     val systemmkContents: ST =
@@ -125,9 +124,12 @@ object MicrokitCodegen {
 
         val sourcePaths: ISZ[String] = for (mk <- makefileContainers) yield s"$$(TOP_DIR)/${mk.relativePathSrcDir}"
 
-        var rustBuildEntries: ISZ[ST] = ISZ()
+        var mcsBuildEntries: ISZ[ST] = ISZ()
         for (mk <- makefileContainers if (mk.isRustic && mk.hasUserContent)) {
-          rustBuildEntries = rustBuildEntries :+ mk.rustBuildEntry
+          mcsBuildEntries = mcsBuildEntries :+ mk.rustBuildEntry
+        }
+        for (mk <- makefileContainers if mk.isVM) {
+          mcsBuildEntries = mcsBuildEntries :+ mk.buildEntry
         }
 
         val typeObjectNames = Set.empty[String] ++ CConnectionProviderPlugin.getTypeSimpleObjectNames(localStore)
@@ -137,7 +139,7 @@ object MicrokitCodegen {
           sourcePaths = sourcePaths,
           elfFiles = elfFiles.elements,
           typeObjectNames = typeObjectNames.elements,
-          buildEntries = rustBuildEntries,
+          buildEntries = mcsBuildEntries,
           elfEntries = elfEntries.elements,
           miscTargets = MakefileUtil.getMakefileTargets(ISZ("system.mk"), localStore))
       } else {

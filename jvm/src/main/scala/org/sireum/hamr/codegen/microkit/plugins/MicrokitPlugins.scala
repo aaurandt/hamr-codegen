@@ -4,15 +4,16 @@ package org.sireum.hamr.codegen.microkit.plugins
 import org.sireum._
 import org.sireum.hamr.codegen.common.plugin.Plugin
 import org.sireum.hamr.codegen.microkit.plugins.attestation.{AttestationPlugin, AttestationReporterPlugin}
-import org.sireum.hamr.codegen.microkit.plugins.c.components.{CComponentPlugin, CComponentPlugin_DomainScheduler, CComponentPlugin_MCS}
-import org.sireum.hamr.codegen.microkit.plugins.c.types.DefaultCTypePlugin
+import org.sireum.hamr.codegen.microkit.plugins.c.components.CComponentPlugin
 import org.sireum.hamr.codegen.microkit.plugins.c.connections.DefaultCConnectionProviderPlugin
+import org.sireum.hamr.codegen.microkit.plugins.c.types.DefaultCTypePlugin
 import org.sireum.hamr.codegen.microkit.plugins.linters.DefaultMicrokitLinterPlugin
+import org.sireum.hamr.codegen.microkit.plugins.monitors.DefaultDomainMonitorPlugin
+import org.sireum.hamr.codegen.microkit.plugins.monitors.DefaultUserLandMonitorPlugin
 import org.sireum.hamr.codegen.microkit.plugins.msd.SystemDescriptionProviderPlugin
 import org.sireum.hamr.codegen.microkit.plugins.reporting.MicrokitReporterPlugin
 import org.sireum.hamr.codegen.microkit.plugins.rust.apis.DefaultCRustApiPlugin
 import org.sireum.hamr.codegen.microkit.plugins.rust.component.DefaultCRustComponentPlugin
-import org.sireum.hamr.codegen.microkit.plugins.rust.gumbo.{DefaultGumboRustPlugin, DefaultGumboXPlugin}
 import org.sireum.hamr.codegen.microkit.plugins.rust.testing.DefaultCRustTestingPlugin
 import org.sireum.hamr.codegen.microkit.plugins.rust.types.DefaultCRustTypePlugin
 
@@ -38,11 +39,15 @@ object MicrokitPlugins {
     // test-ers
     DefaultCRustTestingPlugin(),
 
+    // monitors
+    DefaultDomainMonitorPlugin(),
+    DefaultUserLandMonitorPlugin(),
+
     MicrokitReporterPlugin(),
     AttestationPlugin(),
     AttestationReporterPlugin()
   ) ++
+    GumboPlugins.gumboPlugins ++
     CComponentPlugin.CComponentPlugins ++
-    SystemDescriptionProviderPlugin.systemDescriptionProviderPlugins ++
-    GumboPlugins.gumboPlugins
+    SystemDescriptionProviderPlugin.systemDescriptionProviderPlugins
 }

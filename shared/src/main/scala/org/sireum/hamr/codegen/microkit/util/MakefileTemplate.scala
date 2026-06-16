@@ -27,6 +27,16 @@ object MakefileTemplate {
     val content =
       st"""${CommentTemplate.doNotEditComment_hash}
           |
+          |export TOP_DIR := $$(abspath $$(dir $${MAKEFILE_LIST}))
+          |export TOP_BUILD_DIR := $$(abspath build)
+          |
+          |# Optional configuration file. Usage: make CONFIG=monitor.mk
+          |# Variables defined with ?= below (e.g. MICROKIT_CONFIG) can be
+          |# overridden by exporting them from the config file.
+          |ifdef CONFIG
+          |include $$(CONFIG)
+          |endif
+          |
           |override MICROKIT_SDK := $$(abspath $${MICROKIT_SDK})
           |
           |# SYSTEM_MAKEFILE points to the makefile containing all compile/link rules.
@@ -44,9 +54,6 @@ object MakefileTemplate {
           |export DTC := dtc
           |export LD := ld.lld
           |export RANLIB := llvm-ranlib
-          |
-          |export TOP_DIR := $$(abspath $$(dir $${MAKEFILE_LIST}))
-          |export TOP_BUILD_DIR := $$(abspath build)
           |
           |export CRATES_DIR := $$(TOP_DIR)/crates
           |
@@ -184,6 +191,10 @@ object MakefileTemplate {
                               buildEntries: ISZ[ST],
                               elfEntries: ISZ[String],
                               miscTargets: ISZ[MakefileTarget]): ST = {
+    val miscTargetsOpt: Option[ST] =
+      if (miscTargets.nonEmpty) Some(st"""${(for(t <- miscTargets) yield t.prettyST, "\n\n")}""")
+      else None()
+
     val buildEntriesOpt: Option[ST] =
       if(buildEntries.isEmpty) None()
       else Some(st"""${(buildEntries, "\n\n")}
@@ -196,6 +207,21 @@ object MakefileTemplate {
           |$$(error LIONSOS must be specified)
           |endif
           |override LIONSOS:=$$(abspath $${LIONSOS})
+          |
+          |
+          |# Metaprogram that generates the system description file.
+          |# Override to use an alternative schedule (e.g. monitor.mk).
+          |MSD ?= $$(TOP_DIR)/meta.py
+          |
+          |# Header files containing config structs whose sizes the sdfgen helper
+          |# needs to calculate. Override to point at a different config header.
+          |SCHEDULER_CONFIG_HEADERS ?= $$(TOP_DIR)/scheduler/include/default.user_config.h
+          |
+          |# Scheduler C source file compiled into scheduler.elf.
+          |# Override to substitute a different scheduler implementation
+          |# (e.g. one that publishes schedule state for runtime monitoring).
+          |SCHEDULER_C ?= $$(TOP_DIR)/scheduler/src/default.scheduler.c
+          |
           |
           |TOOLCHAIN := clang
           |CC := clang
@@ -216,15 +242,10 @@ object MakefileTemplate {
           |
           |include $${SDDF}/tools/make/board/common.mk
           |
-          |MSD ?= meta.py
-          |
           |SDFGEN_HELPER := $$(TOP_DIR)/sdfgen_helper.py
           |
           |# Macros needed by sdfgen helper to calculate config struct sizes
           |SDFGEN_UNKOWN_MACROS := MAX_PARTITIONS=61 MAX_SCHEDULE_SLOTS=128
-          |
-          |# Headers containing config structs and dependencies
-          |SCHEDULER_CONFIG_HEADERS := $$(TOP_DIR)/scheduler/include/user_config.h
           |
           |SDDF_CUSTOM_LIBC := 1
           |
@@ -238,23 +259,30 @@ object MakefileTemplate {
           |
           |include $${SDDF_MAKEFILES}
           |
+          |# exporting TOP_TYPES_INCLUDE in case other makefiles need it
+          |export TOP_TYPES_INCLUDE = -I$$(TOP_DIR)/types/include
           |
           |CFLAGS += \
           |${TAB}-I$$(LIONSOS)/include \
           |${TAB}-I$$(SDDF)/include \
           |${TAB}-I$$(SDDF)/include/microkit \
           |${TAB}-I$$(TOP_DIR)/scheduler/include \
-          |${TAB}-I$$(TOP_DIR)/types/include \
-          |${TAB}${(includePaths, " ")}
+          |${TAB}$$(TOP_TYPES_INCLUDE) \
+          |${TAB}${(includePaths, s" \\\n${TAB}")}
           |
           |
           |UTIL_OBJS :=
           |
-          |TYPE_OBJS := ${(typeObjectNames, " ")}
+          |TYPE_OBJS := \
+          |${TAB}${(typeObjectNames, s" \\\n${TAB}")}
           |
           |
           |all: cache.o
-          |CHECK_FLAGS_BOARD_MD5:=.board_cflags-$$(shell echo -- $${CFLAGS} $${BOARD} $${MICROKIT_CONFIG}| shasum | sed 's/ *-//')
+          |
+          |# Sentinel file whose name encodes a hash of build-affecting variables.
+          |# When any of these change the old sentinel is removed and a new one is created,
+          |# forcing dependent targets to rebuild.
+          |CHECK_FLAGS_BOARD_MD5:=.board_cflags-$$(shell echo -- $${CFLAGS} $${BOARD} $${MICROKIT_CONFIG} $${MICROKIT_SDK} $${MSD} $${SCHEDULER_C} $${SCHEDULER_CONFIG_HEADERS}| shasum | sed 's/ *-//')
           |
           |$${CHECK_FLAGS_BOARD_MD5}:
           |${TAB}-rm -f .board_cflags-*
@@ -264,31 +292,34 @@ object MakefileTemplate {
           |vpath %.c $$(SDDF) \
           |${TAB}$$(TOP_DIR)/scheduler/src \
           |${TAB}$$(TOP_DIR)/types/src \
-          |${TAB}${(sourcePaths, " ")}
+          |${TAB}${(sourcePaths, s" \\\n${TAB}")}
           |
           |
           |IMAGES := timer_driver.elf scheduler.elf \
-          |${TAB}${(elfFiles, " ")}
+          |${TAB}${(elfFiles, s" \\\n${TAB}")}
           |
-          |$${IMAGES}: libsddf_util_debug.a
+          |$${IMAGES}: libsddf_util_debug.a $${CHECK_FLAGS_BOARD_MD5}
           |
           |
           |$buildEntriesOpt
           |%.o: %.c $${SDDF}/include
           |${TAB}$${CC} $${CFLAGS} -c -o $$@ $$<
           |
-          |# explicit target as the included common make rules in sddf/tools/make/board/common.mk
-          |# do not include TYPE_OBJS
-          |scheduler.elf: $$(UTIL_OBJS) $$(TYPE_OBJS) scheduler.o
-          |${TAB}$$(LD) $$(LDFLAGS) $$^ $$(LIBS) -o $$@
+          |SCHEDULER_OBJ := $$(notdir $$(basename $$(SCHEDULER_C))).o
+          |
+          |$$(SCHEDULER_OBJ): $$(SCHEDULER_C) $${SDDF}/include
+          |${TAB}$${CC} $${CFLAGS} -c -o $$@ $$<
+          |
+          |scheduler.elf: $$(UTIL_OBJS) $$(TYPE_OBJS) $$(SCHEDULER_OBJ) $${CHECK_FLAGS_BOARD_MD5}
+          |${TAB}$$(LD) $$(LDFLAGS) $$(filter %.o, $$^) $$(LIBS) -o $$@
           |
           |${(elfEntries, "\n\n")}
           |
           |
           |
-          |$$(SYSTEM_FILE): $$(TOP_DIR)/$$(MSD) $$(IMAGES) $$(DTB)
+          |$$(SYSTEM_FILE): $$(IMAGES) $$(DTB) $${CHECK_FLAGS_BOARD_MD5}
           |${TAB}$$(PYTHON) $$(SDFGEN_HELPER) --macros "$$(SDFGEN_UNKOWN_MACROS)" --configs "$$(SCHEDULER_CONFIG_HEADERS)" --output $$(TOP_BUILD_DIR)/config_structs.py
-          |${TAB}$$(PYTHON) $$(TOP_DIR)/$$(MSD) --sddf $$(SDDF) --board $$(MICROKIT_BOARD) --dtb $$(DTB) --output . --sdf $$(SYSTEM_FILE) --objcopy $$(OBJCOPY)
+          |${TAB}$$(PYTHON) $$(MSD) --sddf $$(SDDF) --board $$(MICROKIT_BOARD) --dtb $$(DTB) --output . --sdf $$(SYSTEM_FILE) --objcopy $$(OBJCOPY)
           |${TAB}$$(OBJCOPY) --update-section .device_resources=timer_driver_device_resources.data timer_driver.elf
           |${TAB}$$(OBJCOPY) --update-section .timer_client_config=timer_client_scheduler.data scheduler.elf
           |
@@ -308,6 +339,8 @@ object MakefileTemplate {
           |clobber:: clean
           |${TAB}rm -f *.a
           |${TAB}rm -f $${IMAGE_FILE} $${REPORT_FILE}
+          |
+          |$miscTargetsOpt
           |"""
     return content
   }

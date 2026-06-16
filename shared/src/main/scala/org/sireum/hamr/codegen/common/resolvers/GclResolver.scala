@@ -34,6 +34,14 @@ object GclResolver {
   @strictpure def putSlangTypeToAadlType(m: Map[AST.Typed, TypeIdPath], store: Store): Store =
     store + KEY_SlangTypeToAadlType ~> MapValue(m)
 
+  val KEY_ResolvedComponentAliasMap: String = "KEY_ResolvedComponentAliasMap"
+  @strictpure def getResolvedComponentAliasMap(store: Store): Map[String, IdPath] =
+    store.getOrElse(KEY_ResolvedComponentAliasMap, MapValue[String, IdPath](Map.empty))
+      .asInstanceOf[MapValue[String, IdPath]].map
+
+  @strictpure def putResolvedComponentAliasMap(m: Map[String, IdPath], store: Store): Store =
+    store + KEY_ResolvedComponentAliasMap ~> MapValue(m)
+
   @sig trait SymbolHolder
 
   @datatype class AadlSymbolHolder(symbol: AadlSymbol) extends SymbolHolder
@@ -41,6 +49,14 @@ object GclResolver {
   @datatype class GclSymbolHolder(symbol: GclSymbol) extends SymbolHolder
 
   val toolName: String = "GCL-Resolver"
+
+  def reportError(posOpt: Option[Position], message: String, reporter: Reporter): Unit = {
+    reporter.error(posOpt, toolName, s"GclResolver: $message")
+  }
+
+  def reportWarn(posOpt: Option[Position], message: String, reporter: Reporter): Unit = {
+    reporter.warn(posOpt, toolName, s"GclResolver: $message")
+  }
 
   val GUMBO__Library: String = "GUMBO__Library"
 
@@ -104,16 +120,16 @@ object GclResolver {
                 // must be a call to a data type constructor
                 return None()
               case _ =>
-                reporter.error(optPos, toolName, s"Could not find ${name} in data component ${a.identifier}")
+                reportError(optPos, s"Could not find ${name} in data component ${a.identifier}", reporter)
                 return None()
             }
           }
 
           if (cands.isEmpty) {
-            reporter.error(optPos, toolName, s"Could not find ${name} in data component ${a.identifier}")
+            reportError(optPos, s"Could not find ${name} in data component ${a.identifier}", reporter)
             return None()
           } else if (cands.size > 1) {
-            reporter.error(optPos, toolName, s"Found ${cands.size} instances of ${name} in data component ${a.identifier}")
+            reportError(optPos, s"Found ${cands.size} instances of ${name} in data component ${a.identifier}", reporter)
             return None()
           } else {
             return Some(cands(0))
@@ -147,13 +163,35 @@ object GclResolver {
           }
 
           if (cands.size > 1) {
-            reporter.error(optPos, toolName, s"Found ${cands.size} instances of ${name} in thread component ${a.identifier}")
+            reportError(optPos, s"Found ${cands.size} instances of ${name} in thread component ${a.identifier}", reporter)
+            return None()
+          } else {
+            return Some(cands(0))
+          }
+        case a: AadlSystem =>
+          var cands: ISZ[SymbolHolder] = ISZ()
+
+          if (specFuncs.contains(fqn)) {
+            cands = cands :+ GclSymbolHolder(specFuncs.get(fqn).get)
+          }
+
+          if (cands.isEmpty) {
+            resOpt match {
+              case Some(ario: AST.ResolvedInfo.Object) =>
+                return None()
+              case _ =>
+                return None()
+            }
+          }
+
+          if (cands.size > 1) {
+            reportError(optPos, s"Found ${cands.size} instances of ${name} in system component ${a.identifier}", reporter)
             return None()
           } else {
             return Some(cands(0))
           }
         case x =>
-          reporter.error(optPos, GclResolver.toolName, "Was expecting either a Thread or Data component")
+          reportError(optPos, s"Was expecting either a Thread, Data, or System component but received ${x}", reporter)
           return None()
       }
     }
@@ -173,11 +211,11 @@ object GclResolver {
             case AST.ResolvedInfo.BuiltIn(AST.ResolvedInfo.BuiltIn.Kind.Apply) =>
               return None()
             case x =>
-              reporter.error(o.fullPosOpt, GclResolver.toolName, s"Wasn't expecting $x while resolving Ident")
+              reportError(o.fullPosOpt, s"Wasn't expecting $x while resolving Ident", reporter)
               ISZ()
           }
           return lookup(o.id.value, fqName, o.resOpt, o.fullPosOpt)
-        case _ => reporter.error(o.fullPosOpt, toolName, s"Ident '$o' did not resolve")
+        case _ => reportError(o.fullPosOpt, s"Ident '$o' did not resolve", reporter)
       }
       return None()
     }
@@ -228,13 +266,12 @@ object GclResolver {
           }
         } else {
           if (isIntegrationContext) {
-            reporter.error(o.fullPosOpt, toolName,
-              s"${o.ident.id.value} cannot be used in integration constraints. Integration constraints are only evaluated when data is present on the port, so event-checking predicates are unnecessary")
+            reportError(o.fullPosOpt, s"${o.ident.id.value} cannot be used in integration constraints. Integration constraints are only evaluated when data is present on the port, so event-checking predicates are unnecessary", reporter)
             return org.sireum.hamr.ir.MTransformer.PreResult(T, MNone())
           }
           if (o.ident.id.value == uif__MustSend || o.ident.id.value == uif__MustSendWithExpectedValue) {
             if (o.args.isEmpty) {
-              reporter.error(o.fullPosOpt, toolName, "Invalid MustSend expression. First argument must be outgoing event port")
+              reportError(o.fullPosOpt, "Invalid MustSend expression. First argument must be outgoing event port", reporter)
               return org.sireum.hamr.ir.MTransformer.PreResult(T, MNone())
             }
 
@@ -244,7 +281,7 @@ object GclResolver {
                 halt("should be infeasible now")
               case i: Exp.Ident => i
               case _ =>
-                reporter.error(o.fullPosOpt, toolName, "Invalid MustSend expression. First argument must (currently) be the simple name of an outgoing event port")
+                reportError(o.fullPosOpt, "Invalid MustSend expression. First argument must (currently) be the simple name of an outgoing event port", reporter)
                 return org.sireum.hamr.ir.MTransformer.PreResult(T, MNone())
             }
 
@@ -252,7 +289,7 @@ object GclResolver {
               case Some(ash@AadlSymbolHolder(aadlFeatureEvent: AadlFeatureEvent)) if aadlFeatureEvent.direction == Direction.Out =>
 
                 if (!aadlFeatureEvent.isInstanceOf[AadlEventPort] && !aadlFeatureEvent.isInstanceOf[AadlEventDataPort]) {
-                  reporter.error(o.fullPosOpt, toolName, "Invalid MustSend expression. First argument must an an outgoing event port")
+                  reportError(o.fullPosOpt, "Invalid MustSend expression. First argument must an an outgoing event port", reporter)
                   return org.sireum.hamr.ir.MTransformer.PreResult(T, MNone())
                 }
 
@@ -296,7 +333,7 @@ object GclResolver {
                 } else if (o.args.size == 2) { // MustSend(portIdent, expectedValue)
 
                   if (aadlFeatureEvent.isInstanceOf[AadlEventPort]) {
-                    reporter.error(o.fullPosOpt, toolName, "Invalid MustSend expression. Expected value not supported for event ports")
+                    reportError(o.fullPosOpt, "Invalid MustSend expression. Expected value not supported for event ports", reporter)
                     return org.sireum.hamr.ir.MTransformer.PreResult(T, MNone())
                   }
 
@@ -369,12 +406,12 @@ object GclResolver {
                   return org.sireum.hamr.ir.MTransformer.PreResult(F, MSome(rexp))
 
                 } else {
-                  reporter.error(o.fullPosOpt, toolName, "Invalid MustSend expression. Too many arguments")
+                  reportError(o.fullPosOpt, "Invalid MustSend expression. Too many arguments", reporter)
                   return org.sireum.hamr.ir.MTransformer.PreResult(T, MNone())
                 }
 
               case _ =>
-                reporter.error(o.fullPosOpt, toolName, "Invalid MustSend expression. First argument must be an outgoing event port")
+                reportError(o.fullPosOpt, "Invalid MustSend expression. First argument must be an outgoing event port", reporter)
                 return org.sireum.hamr.ir.MTransformer.PreResult(T, MNone())
             }
 
@@ -387,7 +424,7 @@ object GclResolver {
                   halt("this shouldn't hold anymore")
                 case i: Exp.Ident => i
                 case _ =>
-                  reporter.error(o.fullPosOpt, toolName, "Invalid NoSend expression. Argument must (currently) be the simple name of an outgoing event port")
+                  reportError(o.fullPosOpt, "Invalid NoSend expression. Argument must (currently) be the simple name of an outgoing event port", reporter)
                   return org.sireum.hamr.ir.MTransformer.PreResult(T, MNone())
               }
 
@@ -429,12 +466,12 @@ object GclResolver {
 
                   return org.sireum.hamr.ir.MTransformer.PreResult(F, MSome(api_portid_isEmpty))
                 case _ =>
-                  reporter.error(o.fullPosOpt, toolName, "Invalid NoSend expression. Can only be applied to outgoing event ports")
+                  reportError(o.fullPosOpt, "Invalid NoSend expression. Can only be applied to outgoing event ports", reporter)
                   return org.sireum.hamr.ir.MTransformer.PreResult(T, MNone())
               }
             }
             else {
-              reporter.error(o.fullPosOpt, toolName, "Invalid NoSend expression. Requires an outgoing event port")
+              reportError(o.fullPosOpt, "Invalid NoSend expression. Requires an outgoing event port", reporter)
               return org.sireum.hamr.ir.MTransformer.PreResult(T, MNone())
             }
           } else if (o.ident.id.value == uif__HasEvent) {
@@ -446,7 +483,7 @@ object GclResolver {
                   halt("This shouldn't hold anymore")
                 case i: Exp.Ident => i
                 case _ =>
-                  reporter.error(o.fullPosOpt, toolName, "Invalid HasEvent expression. Argument must (currently) be the simple name of an incoming event port")
+                  reportError(o.fullPosOpt, "Invalid HasEvent expression. Argument must (currently) be the simple name of an incoming event port", reporter)
                   return org.sireum.hamr.ir.MTransformer.PreResult(T, MNone())
               }
 
@@ -488,12 +525,12 @@ object GclResolver {
 
                   return org.sireum.hamr.ir.MTransformer.PreResult(F, MSome(api_portid_nonEmpty))
                 case _ =>
-                  reporter.error(o.fullPosOpt, toolName, "Invalid HasEvent expression. Can only be applied to incoming event ports")
+                  reportError(o.fullPosOpt, "Invalid HasEvent expression. Can only be applied to incoming event ports", reporter)
                   return org.sireum.hamr.ir.MTransformer.PreResult(T, MNone())
               }
             }
             else {
-              reporter.error(o.fullPosOpt, toolName, "Invalid HasEvent expression. Requires an incoming event port")
+              reportError(o.fullPosOpt, "Invalid HasEvent expression. Requires an incoming event port", reporter)
               return org.sireum.hamr.ir.MTransformer.PreResult(T, MNone())
             }
           } else {
@@ -624,16 +661,16 @@ object GclResolver {
                   o.attr.resOpt match {
                     case Some(ri: ResolvedInfo.Method) => ri.owner
                     case _ =>
-                      reporter.error(o.fullPosOpt, toolName, s"Couldn't resolve owner of ${o}")
+                      reportError(o.fullPosOpt, s"Couldn't resolve owner of ${o}", reporter)
                       ISZ("<INVALID>")
                   }
                 }
                 val components: ISZ[AadlComponent] = symbolTable.classifierMap.get(owner).get
                 if (components.size > 1) {
-                  reporter.error(None(), toolName, s"There are multiple instances of ${owner}, currently only handling single instances")
+                  reportError(None(), s"There are multiple instances of ${owner}, currently only handling single instances", reporter)
                   None()
                 } else if (components.isEmpty) {
-                  reporter.error(None(), toolName, s"Couldn't find any instances of ${owner}")
+                  reportError(None(), s"Couldn't find any instances of ${owner}", reporter)
                   None()
                 } else {
                   val component = components(0)
@@ -658,10 +695,10 @@ object GclResolver {
           processIdent(o) match {
             case Some(GclSymbolHolder(g: GclStateVar)) =>
             case _ =>
-              reporter.error(o.fullPosOpt, toolName, s"Only state vars can be used in In expressions")
+              reportError(o.fullPosOpt, s"Only state vars can be used in In expressions", reporter)
           }
         case _ =>
-          reporter.error(o.fullPosOpt, toolName, s"Currently only allowing the simple name of state vars to be used in In expressions: $o")
+          reportError(o.fullPosOpt, s"Currently only allowing the simple name of state vars to be used in In expressions: $o", reporter)
       }
 
       return MNone()
@@ -767,7 +804,7 @@ object GclResolver {
     aadlTypes.typeMap.get(s) match {
       case Some(t) => return t
       case _ =>
-        reporter.error(posOpt, toolName, s"$s did not resolve to an AADL type")
+        reportError(posOpt, s"$s did not resolve to an AADL type", reporter)
         return TypeUtil.EmptyType
     }
   }
@@ -798,6 +835,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
   var arrayIndexInterpolateImports: ISZ[AST.Stmt.Import] = ISZ()
   var indexingTypeFingerprints: Map[String, TypeIdPath] = Map.empty
   var slangTypeToAadlType: Map[AST.Typed, TypeIdPath] = Map.empty
+  var resolvedComponentAliasMap: Map[String, IdPath] = Map.empty
 
   def reset: B = {
     apiReferences = Set.empty
@@ -810,6 +848,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
     modelContainsBoundArrays = F
     arrayIndexInterpolateImports = ISZ()
     indexingTypeFingerprints = Map.empty
+    slangTypeToAadlType = Map.empty
 
     return T
   }
@@ -841,7 +880,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
     val typeChecked = typeChecker.checkExp(None(), scope, exp, reporter)
 
     if (typeChecked._2.isEmpty) {
-      reporter.error(exp.posOpt, toolName, s"Could not resolve expression's type: ${exp.prettyST.render}")
+      reportError(exp.posOpt, s"Could not resolve expression's type: ${exp.prettyST.render}", reporter)
     }
 
     return Some(typeChecked)
@@ -908,14 +947,14 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
                 rexp
             }
           case Some(x) =>
-            reporter.error(_exp.fullPosOpt, GclResolver.toolName, st"Expecting ${(expectedType, ".")} but found $x".render)
+            reportError(_exp.fullPosOpt, st"Expecting ${(expectedType, ".")} but found $x".render, reporter)
             _exp
           case _ =>
             assert(reporter.hasError, "Expression is untyped so Tipe should have reported errors already") // sanity check
             _exp
         }
       case _ =>
-        reporter.error(_exp.fullPosOpt, GclResolver.toolName, "Unexpected: type checking returned none")
+        reportError(_exp.fullPosOpt, "Unexpected: type checking returned none", reporter)
         _exp
     }
     return rexp
@@ -943,7 +982,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
             case Some(resolvedMethod) =>
               g.method(sig = resolvedMethod.ast.sig, attr = resolvedMethod.ast.attr)
             case _ =>
-              reporter.error(gclMethod.posOpt, toolName, st"Could not resolve method '${(fqn, "::")}'".render)
+              reportError(gclMethod.posOpt, st"Could not resolve method '${(fqn, "::")}'".render, reporter)
               return None()
           }
 
@@ -996,7 +1035,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
 
               Some(body(stmts=ISZ(ret(expOpt=Some(rexp)))))
             case _ =>
-              reporter.error(g.method.posOpt, GclResolver.toolName, "Unexpected: method does not have a body")
+              reportError(g.method.posOpt, "Unexpected: method does not have a body", reporter)
               None()
           }
 
@@ -1103,10 +1142,10 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
 
               return Some(i(exp = resolvedExp))
 
-            case Some(x) => reporter.error(i.exp.fullPosOpt, GclResolver.toolName, s"Expecting B but found ${x}")
+            case Some(x) => reportError(i.exp.fullPosOpt, s"Expecting B but found ${x}", reporter)
             case _ => assert(reporter.hasError, "Invariant expression is untyped so Tipe should have reported errors already")
           }
-        case _ => reporter.error(i.exp.fullPosOpt, GclResolver.toolName, "Unexpected: type checking returned none")
+        case _ => reportError(i.exp.fullPosOpt, "Unexpected: type checking returned none", reporter)
       }
       return None()
     }
@@ -1135,7 +1174,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
       var resolvedInvariants: ISZ[GclInvariant] = ISZ()
       for (i <- s.invariants) {
         if (seenInvariantIds.contains(i.id)) {
-          reporter.error(i.exp.fullPosOpt, GclResolver.toolName, s"Duplicate invariant id: ${i.id}")
+          reportError(i.exp.fullPosOpt, s"Duplicate invariant id: ${i.id}", reporter)
         }
         seenInvariantIds = seenInvariantIds + i.id
         visitInvariant(i) match {
@@ -1153,7 +1192,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
         for (glcIntegSpec <- gclIntegration.specs) {
 
           if (seenSpecNames.contains(glcIntegSpec.id)) {
-            reporter.error(glcIntegSpec.exp.fullPosOpt, GclResolver.toolName, s"Duplicate spec name: ${glcIntegSpec.id}")
+            reportError(glcIntegSpec.exp.fullPosOpt, s"Duplicate spec name: ${glcIntegSpec.id}", reporter)
           }
           seenSpecNames = seenSpecNames + glcIntegSpec.id
 
@@ -1186,11 +1225,11 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
                     case AadlSymbolHolder(sym: AadlPort) => portRefs = portRefs + sym
                     case GclSymbolHolder(sym: GclMethod) => // TODO: collect port refs in method args
                     case x =>
-                      reporter.error(glcIntegSpec.exp.fullPosOpt, toolName, s"Error in integration spec.  Not expecting to encounter ${x}")
+                      reportError(glcIntegSpec.exp.fullPosOpt, s"Error in integration spec.  Not expecting to encounter ${x}", reporter)
                   }
                 }
                 if (portRefs.size != 1) {
-                  reporter.error(glcIntegSpec.exp.fullPosOpt, GclResolver.toolName, s"An integration clause must refer to exactly one port")
+                  reportError(glcIntegSpec.exp.fullPosOpt, s"An integration clause must refer to exactly one port", reporter)
                   None()
                 } else {
                   Some(portRefs.elements(0))
@@ -1214,14 +1253,14 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
                 sym.direction match {
                   case Direction.Out =>
                     if (!glcIntegSpec.isInstanceOf[GclGuarantee]) {
-                      reporter.error(glcIntegSpec.exp.fullPosOpt, GclResolver.toolName, s"Integration contracts for outgoing ports must be Guarantee statements")
+                      reportError(glcIntegSpec.exp.fullPosOpt, s"Integration contracts for outgoing ports must be Guarantee statements", reporter)
                     }
                   case Direction.In =>
                     if (!glcIntegSpec.isInstanceOf[GclAssume]) {
-                      reporter.error(glcIntegSpec.exp.fullPosOpt, GclResolver.toolName, s"Integration contracts for incoming ports must be Assume statements")
+                      reportError(glcIntegSpec.exp.fullPosOpt, s"Integration contracts for incoming ports must be Assume statements", reporter)
                     }
                   case x =>
-                    reporter.error(resolvedExpr.fullPosOpt, GclResolver.toolName, s"Previous phase should have rejected this case: ${x}")
+                    reportError(resolvedExpr.fullPosOpt, s"Previous phase should have rejected this case: ${x}", reporter)
                 }
               }
             }
@@ -1240,24 +1279,24 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
                   s.state, gclMethods, symbolTable, reporter)
                 if (!reporter.hasError) {
                   if (symbols.size != 1) {
-                    reporter.error(e.fullPosOpt, GclResolver.toolName, s"From/To expressions should resolve to exactly one symbol, instead resolved to ${symbols.size}")
+                    reportError(e.fullPosOpt, s"From/To expressions should resolve to exactly one symbol, instead resolved to ${symbols.size}", reporter)
                   }
                   symbols(0) match {
                     case AadlSymbolHolder(sym) =>
                       sym match {
                         case p: AadlPort =>
                           if (isFrom && p.direction != Direction.In) {
-                            reporter.error(e.fullPosOpt, GclResolver.toolName, s"Only in ports are allowed in From flow clauses")
+                            reportError(e.fullPosOpt, s"Only in ports are allowed in From flow clauses", reporter)
                           }
                           if (!isFrom && p.direction != Direction.Out) {
-                            reporter.error(e.fullPosOpt, GclResolver.toolName, s"Only out ports are allowed in To flow clauses")
+                            reportError(e.fullPosOpt, s"Only out ports are allowed in To flow clauses", reporter)
                           }
                         case _ =>
-                          reporter.error(e.fullPosOpt, GclResolver.toolName, s"From/To flow clauses can only contain ports and state vars")
+                          reportError(e.fullPosOpt, s"From/To flow clauses can only contain ports and state vars", reporter)
                       }
                     case GclSymbolHolder(sym) =>
                       if (!sym.isInstanceOf[GclStateVar]) {
-                        reporter.error(e.fullPosOpt, GclResolver.toolName, s"From/To flow clauses can only contain ports and state vars")
+                        reportError(e.fullPosOpt, s"From/To flow clauses can only contain ports and state vars", reporter)
                       }
                   }
                   val resolvedExp: AST.Exp = rexp2 match {
@@ -1267,10 +1306,10 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
                   return Some(resolvedExp)
                 }
               case _ =>
-                reporter.error(e.fullPosOpt, GclResolver.toolName, s"Unable to resolve $e")
+                reportError(e.fullPosOpt, s"Unable to resolve $e", reporter)
             }
           case _ =>
-            reporter.error(posOpt, GclResolver.toolName, s"Expecting from/to expressions to be Idents, found ${exp}")
+            reportError(posOpt, s"Expecting from/to expressions to be Idents, found ${exp}", reporter)
         }
         return None()
       }
@@ -1289,7 +1328,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
 
                   if (!reporter.hasError) {
                     if (symbols.size != 1) {
-                      reporter.error(e.fullPosOpt, GclResolver.toolName, s"Modifies should resolve to exactly one symbol, instead resolved to ${symbols.size}")
+                      reportError(e.fullPosOpt, s"Modifies should resolve to exactly one symbol, instead resolved to ${symbols.size}", reporter)
                     } else {
                       symbols(0) match {
                         case AadlSymbolHolder(p: AadlPort) if p.direction == Direction.Out =>
@@ -1304,14 +1343,14 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
                           }
                           resolvedExpressions = resolvedExpressions :+ resolvedExpression
                         case x =>
-                          reporter.error(modifies.fullPosOpt, GclResolver.toolName, s"Modifies expressions must be the simple name of an outgoing port or a state variable, found ${x}.")
+                          reportError(modifies.fullPosOpt, s"Modifies expressions must be the simple name of an outgoing port or a state variable, found ${x}.", reporter)
                       }
                     }
                   }
-                case _ => reporter.error(modifies.fullPosOpt, GclResolver.toolName, s"Unable to resolve $e")
+                case _ => reportError(modifies.fullPosOpt, s"Unable to resolve $e", reporter)
               }
             case _ =>
-              reporter.error(modifies.fullPosOpt, GclResolver.toolName, s"Modifies expressions must be the simple name of an outgoing port or a state variable, found ${modifies}")
+              reportError(modifies.fullPosOpt, s"Modifies expressions must be the simple name of an outgoing port or a state variable, found ${modifies}", reporter)
           }
         }
         return resolvedExpressions
@@ -1326,7 +1365,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
         var seenGuaranteeIds: Set[String] = Set.empty
         for (guarantees <- s.initializes.get.guarantees) {
           if (seenGuaranteeIds.contains(guarantees.id)) {
-            reporter.error(guarantees.posOpt, GclResolver.toolName, s"Duplicate spec name: ${guarantees.id}")
+            reportError(guarantees.posOpt, s"Duplicate spec name: ${guarantees.id}", reporter)
           }
           seenGuaranteeIds = seenGuaranteeIds + guarantees.id
 
@@ -1349,10 +1388,10 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
         var resolvedFlows: ISZ[InfoFlowClause] = ISZ()
         for (flow <- s.initializes.get.flows) {
           if (flow.from.nonEmpty) {
-            reporter.error(flow.posOpt, GclResolver.toolName, s"Initialize from clauses must be empty")
+            reportError(flow.posOpt, s"Initialize from clauses must be empty", reporter)
           }
           if (flow.to.isEmpty) {
-            reporter.error(flow.posOpt, GclResolver.toolName, s"Initialize to clauses cannot be empty")
+            reportError(flow.posOpt, s"Initialize to clauses cannot be empty", reporter)
           }
           var resolvedToExprs: ISZ[Exp] = ISZ()
           for (toExp <- flow.to) {
@@ -1379,7 +1418,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
           var seenSpecIds: Set[String] = Set.empty
           for (assumee <- assumes) {
             if (seenSpecIds.contains(assumee.id)) {
-              reporter.error(assumee.posOpt, GclResolver.toolName, s"Duplicate spec name: ${assumee.id}")
+              reportError(assumee.posOpt, s"Duplicate spec name: ${assumee.id}", reporter)
             }
             seenSpecIds = seenSpecIds + assumee.id
 
@@ -1396,7 +1435,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
               for (sym <- symbols) {
                 sym match {
                   case AadlSymbolHolder(i: AadlPort) if i.direction == Direction.Out =>
-                    reporter.error(assumee.exp.fullPosOpt, toolName, "Assume clauses cannot refer to outgoing ports")
+                    reportError(assumee.exp.fullPosOpt, "Assume clauses cannot refer to outgoing ports", reporter)
                   case _ =>
                 }
               }
@@ -1411,7 +1450,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
           var resolvedGuarantee: ISZ[GclGuarantee] = ISZ()
           for (guarantee <- guarantees) {
             if (seenSpecIds.contains(guarantee.id)) {
-              reporter.error(guarantee.posOpt, GclResolver.toolName, s"Duplicate spec name: ${guarantee.id}")
+              reportError(guarantee.posOpt, s"Duplicate spec name: ${guarantee.id}", reporter)
             }
             seenSpecIds = seenSpecIds + guarantee.id
 
@@ -1434,7 +1473,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
           var resolvedCases: ISZ[GclCaseStatement] = ISZ()
           for (caase <- cases) {
             if (seenSpecIds.contains(caase.id)) {
-              reporter.error(caase.posOpt, GclResolver.toolName, s"Duplicate spec name: ${caase.id}")
+              reportError(caase.posOpt, s"Duplicate spec name: ${caase.id}", reporter)
             }
             seenSpecIds = seenSpecIds + caase.id
 
@@ -1453,7 +1492,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
                 for (sym <- symbols) {
                   sym match {
                     case AadlSymbolHolder(i: AadlPort) if i.direction == Direction.Out =>
-                      reporter.error(assumes2.fullPosOpt, toolName, "Assume clauses cannot refer to outgoing ports")
+                      reportError(assumes2.fullPosOpt, "Assume clauses cannot refer to outgoing ports", reporter)
                     case _ =>
                   }
                 }
@@ -1499,18 +1538,17 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
                   s.state, gclMethods, symbolTable, reporter)
                 if (!reporter.hasError) {
                   if (symbols.size != 1) {
-                    reporter.error(handler.port.fullPosOpt, GclResolver.toolName, s"Handler should resolve to exactly one symbol, instead resolved to ${symbols.size}")
+                    reportError(handler.port.fullPosOpt, s"Handler should resolve to exactly one symbol, instead resolved to ${symbols.size}", reporter)
                   }
                   symbols(0) match {
                     case AadlSymbolHolder(p: AadlPort) =>
                       if (computeHandlerPortMap.contains(handler.port)) {
-                        reporter.error(handler.port.fullPosOpt, GclResolver.toolName,
-                          s"Only a single handler is allowed per port")
+                        reportError(handler.port.fullPosOpt, s"Only a single handler is allowed per port", reporter)
                       }
                       computeHandlerPortMap = computeHandlerPortMap + handler.port ~> p
 
                       if (p.direction != Direction.In || p.isInstanceOf[AadlDataPort]) {
-                        reporter.error(handler.port.fullPosOpt, GclResolver.toolName, s"Compute handlers can only be applied to incoming event or event data ports")
+                        reportError(handler.port.fullPosOpt, s"Compute handlers can only be applied to incoming event or event data ports", reporter)
                       }
 
                       val resolvedExp: AST.Exp = hexp match {
@@ -1518,10 +1556,10 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
                         case _ => rexp
                       }
                       resolvedHandlerPort = resolvedExp
-                    case x => reporter.error(handler.port.fullPosOpt, GclResolver.toolName, s"Handler should resolve to an AADL port but received $x")
+                    case x => reportError(handler.port.fullPosOpt, s"Handler should resolve to an AADL port but received $x", reporter)
                   }
                 }
-              case _ => reporter.error(handler.posOpt, GclResolver.toolName, s"Unable to resolve ${handler.port}")
+              case _ => reportError(handler.posOpt, s"Unable to resolve ${handler.port}", reporter)
             }
 
             val resolvedHandlerModifiesClause = processModifiesClause(handler.modifies)
@@ -1530,7 +1568,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
             var handlerSpecIds: Set[String] = Set.empty
             for (assm <- handler.assumes) {
               if (seenSpecIds.contains(assm.id) || handlerSpecIds.contains(assm.id)) {
-                reporter.error(assm.posOpt, GclResolver.toolName, s"Duplicate spec name: ${assm.id}")
+                reportError(assm.posOpt, s"Duplicate spec name: ${assm.id}", reporter)
               }
               handlerSpecIds = handlerSpecIds + assm.id
 
@@ -1546,7 +1584,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
               for (sym <- symbols) {
                 sym match {
                   case AadlSymbolHolder(i: AadlPort) if i.direction == Direction.Out =>
-                    reporter.error(assm.exp.fullPosOpt, toolName, "Assume clauses cannot refer to outgoing ports")
+                    reportError(assm.exp.fullPosOpt, "Assume clauses cannot refer to outgoing ports", reporter)
                   case _ =>
                 }
               }
@@ -1561,7 +1599,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
             var resolvedHandlerGuarantees: ISZ[GclGuarantee] = ISZ()
             for (guar <- handler.guarantees) {
               if (seenSpecIds.contains(guar.id) || handlerSpecIds.contains(guar.id)) {
-                reporter.error(guar.posOpt, GclResolver.toolName, s"Duplicate spec name: ${guar.id}")
+                reportError(guar.posOpt, s"Duplicate spec name: ${guar.id}", reporter)
               }
               handlerSpecIds = handlerSpecIds + guar.id
 
@@ -1585,7 +1623,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
             var resolvedHandlerCases: ISZ[GclCaseStatement] = ISZ()
             for (caase <- handler.cases) {
               if (seenSpecIds.contains(caase.id)) {
-                reporter.error(caase.posOpt, GclResolver.toolName, s"Duplicate spec name: ${caase.id}")
+                reportError(caase.posOpt, s"Duplicate spec name: ${caase.id}", reporter)
               }
               seenSpecIds = seenSpecIds + caase.id
 
@@ -1604,7 +1642,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
                   for (sym <- symbols) {
                     sym match {
                       case AadlSymbolHolder(i: AadlPort) if i.direction == Direction.Out =>
-                        reporter.error(assumes2.fullPosOpt, toolName, "Assume clauses cannot refer to outgoing ports")
+                        reportError(assumes2.fullPosOpt, "Assume clauses cannot refer to outgoing ports", reporter)
                       case _ =>
                     }
                   }
@@ -1644,10 +1682,10 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
             component match {
               case a: AadlDispatchableComponent =>
                 if (!a.isSporadic()) {
-                  reporter.error(handler.port.fullPosOpt, GclResolver.toolName, s"Compute handlers can only be used with sporadic components")
+                  reportError(handler.port.fullPosOpt, s"Compute handlers can only be used with sporadic components", reporter)
                 }
               case _ =>
-                reporter.error(handler.port.fullPosOpt, GclResolver.toolName, s"Unexpected: Compute handlers can only be used with dispatchable components")
+                reportError(handler.port.fullPosOpt, s"Unexpected: Compute handlers can only be used with dispatchable components", reporter)
             }
 
             resolvedHandlers = resolvedHandlers :+ handler(
@@ -1661,7 +1699,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
           var resolvedFlows: ISZ[InfoFlowClause] = ISZ()
           for (flow <- flows) {
             if (flow.from.isEmpty && flow.to.isEmpty) {
-              reporter.error(flow.posOpt, GclResolver.toolName, s"At least one of the from/to clauses must be non-empty")
+              reportError(flow.posOpt, s"At least one of the from/to clauses must be non-empty", reporter)
             }
             var resolvedFromExps: ISZ[Exp] = ISZ()
             for (fromExp <- flow.from) {
@@ -1689,7 +1727,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
             handlers = resolvedHandlers,
             flows = resolvedFlows))
         }
-        case Some(x) => reporter.error(componentPos, toolName, s"Expecting GclCompute but received ${x}")
+        case Some(x) => reportError(componentPos, s"Expecting GclCompute but received ${x}", reporter)
         case _ =>
       }
 
@@ -1720,6 +1758,17 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
         }
         resolvedMonitor = Some(s.monitor.get(
           guarantees = resolvedGuarantees))
+      var resolvedCompositions: ISZ[GclComposition] = ISZ()
+      var compositionIds: Set[String] = Set.empty
+      for (comp <- s.compositions) {
+        if (compositionIds.contains(comp.id)) {
+          reportError(comp.posOpt, s"Composition id '${comp.id}' is already declared for this system", reporter)
+        }
+        compositionIds = compositionIds + comp.id
+        validateSchemaLabels(comp)
+        val resolvedProperties: ISZ[GclCompositionProperty] =
+          for (p <- comp.properties) yield p(bindings = for (b <- p.bindings) yield visitPropertyBinding(b))
+        resolvedCompositions = resolvedCompositions :+ comp(properties = resolvedProperties)
       }
 
       return Some(s(
@@ -1728,8 +1777,87 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
         initializes = resolvedInitializes,
         integration = resolvedIntegration,
         compute = resolvedCompute,
-        monitor = resolvedMonitor))
+        monitor = resolvedMonitor,
+        compositions = resolvedCompositions))
 
+    }
+
+    // Schema sanity: labels (place and occurrence) are unique within a
+    // composition, must not collide with any component/port/state-var alias or
+    // the reserved START/END names, and every occurrence of a multi-firing component must
+    // carry an occurrence label (D8: 'after x' would otherwise be ambiguous).
+    def validateSchemaLabels(comp: GclComposition): Unit = {
+      var names: Set[String] = Set.empty[String] + "START" + "END"
+      var aliasNames: Set[String] = Set.empty[String]
+      for (a <- comp.componentAliases) {
+        aliasNames = aliasNames + a.name
+      }
+      for (a <- comp.portAliases) {
+        aliasNames = aliasNames + a.name
+      }
+      for (a <- comp.stateVarAliases) {
+        aliasNames = aliasNames + a.name
+      }
+      var occurrenceCounts: Map[String, Z] = Map.empty
+      var unlabeledOccurrences: Map[String, Z] = Map.empty
+
+      def declareLabel(l: String, posOpt: Option[Position]): Unit = {
+        if (names.contains(l)) {
+          reportError(posOpt, s"Schema label '$l' is already declared (START and END are reserved)", reporter)
+        }
+        if (aliasNames.contains(l)) {
+          reportError(posOpt, s"Schema label '$l' collides with a component/port/state-var alias", reporter)
+        }
+        names = names + l
+      }
+
+      def visitSchemaElements(elements: ISZ[GclSchemaElement]): Unit = {
+        for (elem <- elements) {
+          elem match {
+            case c: GclSchemaComponentRef =>
+              val key: String =
+                if (c.component.name.nonEmpty) c.component.name(c.component.name.lastIndex) else "?"
+              occurrenceCounts = occurrenceCounts + key ~> (occurrenceCounts.getOrElse(key, z"0") + 1)
+              c.occurrenceLabelOpt match {
+                case Some(l) => declareLabel(l, c.posOpt)
+                case _ =>
+                  unlabeledOccurrences = unlabeledOccurrences + key ~> (unlabeledOccurrences.getOrElse(key, z"0") + 1)
+              }
+            case l: GclSchemaLabel => declareLabel(l.id, l.posOpt)
+            case sj: GclSchemaSplitJoin =>
+              for (branch <- sj.branches) {
+                visitSchemaElements(branch.elements)
+              }
+          }
+        }
+      }
+      visitSchemaElements(comp.schema)
+
+      for (e <- occurrenceCounts.entries) {
+        if (e._2 > 1 && unlabeledOccurrences.getOrElse(e._1, z"0") > 0) {
+          reportError(comp.posOpt,
+            s"Component '${e._1}' fires ${e._2} times per hyperperiod in composition '${comp.id}'; every occurrence must carry an occurrence label (<alias> @ <id>)", reporter)
+        }
+      }
+    }
+
+    def visitPropertyBinding(b: GclPropertyBinding): GclPropertyBinding = {
+      visitSlangExp(exp = b.exp, context = context, scope = scope, mode = TypeChecker.ModeContext.Spec, typeHierarchy = typeHierarchy, reporter = reporter) match {
+        case Some((rexp, roptType)) =>
+          roptType match {
+            case Some(AST.Typed.Name(ISZ("org", "sireum", "B"), _, _)) =>
+              val (rexp2, _, _) = GclResolver.collectSymbols(rexp, RewriteMode.Normal, component, F, indexingTypeFingerprints,
+                ISZ(), libMethods, symbolTable, reporter)
+              val resolvedExp: AST.Exp =
+                if (rexp2.isEmpty) rexp
+                else rexp2.get
+              return b(exp = resolvedExp)
+            case Some(x) => reportError(b.exp.fullPosOpt, s"Expecting B but found ${x}", reporter)
+            case _ => assert(reporter.hasError, "Property binding expression is untyped so Tipe should have reported errors already")
+          }
+        case _ => reportError(b.exp.fullPosOpt, "Unexpected: type checking returned none", reporter)
+      }
+      return b
     }
 
     visitGclSubclause(subclause) match {
@@ -1758,8 +1886,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
   def declareName(entity: String, name: QName, info: Info, posOpt: Option[Position], reporter: Reporter): Unit = {
     globalNameMap.get(name) match {
       case Some(_) =>
-        reporter
-          .error(posOpt, GclResolver.toolName, s"Cannot declare $entity because the name has already been declared previously.")
+        reportError(posOpt, s"Cannot declare $entity because the name has already been declared previously.", reporter)
       case _ => globalNameMap = globalNameMap + name ~> info
     }
   }
@@ -1817,7 +1944,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
           return resolveTypeH(getAadlType(aadlName, aadlTypes, posOpt, reporter), posOpt)
 
         case x =>
-          reporter.error(value.posOpt, GclResolver.toolName, s"Wasn't expecting $x")
+          reportError(value.posOpt, s"Wasn't expecting $x", reporter)
           return AST.Type.Named(name = AST.Name(ids = ISZ(), attr = AST.Attr(posOpt)), rTypeOpt = None(), typeArgs = ISZ(), attr = AST.TypedAttr(posOpt, None()))
       }
     }
@@ -1838,7 +1965,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
           (te.name, AST.Typed.Name(te.name, AST.Typed.noRType, ISZ()))
 
         case x =>
-          reporter.error(posOpt, GclResolver.toolName, s"Wasn't expecting a $x")
+          reportError(posOpt, s"Wasn't expecting a $x", reporter)
           (ISZ(), AST.Typed.Name(ISZ(), AST.Typed.noRType, ISZ()))
       }
 
@@ -1891,6 +2018,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
       val posOpt: Option[Position] = if (aadlType.container.nonEmpty) aadlType.container.get.identifier.pos else posOptP
 
       val qualifiedName = aadlType.classifier
+      val packageName = ops.ISZOps(qualifiedName).dropRight(1)
 
       val qualifiedTypeName: ISZ[String] =
         aadlType match {
@@ -1901,6 +2029,9 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
       if (globalTypeMap.contains(qualifiedTypeName)) {
         return globalTypeMap.get(qualifiedTypeName).get
       }
+
+      // build Slang package from AADL package
+      buildPackageInfo(packageName, posOpt)
 
       val attr = AST.Attr(posOpt)
       val rattr = AST.ResolvedAttr(posOpt = posOpt, resOpt = None(), typedOpt = None())
@@ -1953,7 +2084,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
 
           val gclAnnexes = e.container.get.annexes.filter((a: Annex) => a.clause.isInstanceOf[GclSubclause]).map((a: Annex) => a.clause.asInstanceOf[GclSubclause])
           if (gclAnnexes.nonEmpty) {
-            reporter.error(posOpt, toolName, "GCL subclauses cannot be attached to enum definitions")
+            reportError(posOpt, "GCL subclauses cannot be attached to enum definitions", reporter)
           }
 
           return enumx
@@ -1965,17 +2096,14 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
 
         case a: ArrayType => {
           if (a.dimensions.size > 1) {
-            reporter.error(posOpt, GclResolver.toolName, s"Only single dimension arrays are supported.  ${a.name} has ${a.dimensions.size}")
+            reportError(posOpt, s"Only single dimension arrays are supported.  ${a.name} has ${a.dimensions.size}", reporter)
           }
 
           if (globalTypeMap.contains(qualifiedName)) {
             return globalTypeMap.get(qualifiedName).get
           }
 
-          val packageName = ops.ISZOps(qualifiedName).dropRight(1)
           val simpleName = qualifiedName(qualifiedName.lastIndex)
-
-          buildPackageInfo(packageName, posOpt)
 
           val baseTypeFQN: ISZ[String] = GclResolverUtil.getSlangName(a.baseType, reporter)
 
@@ -2343,8 +2471,6 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
 
         case b: BaseType =>
           val simpleName = b.simpleName
-          val packageName = ops.ISZOps(qualifiedTypeName).dropRight(1)
-          buildPackageInfo(packageName, posOpt)
 
           val imports: ISZ[AST.Stmt.Import] = ISZ()
 
@@ -2393,7 +2519,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
 
           val gclAnnexes = b.container.get.annexes.filter((a: Annex) => a.clause.isInstanceOf[GclSubclause]).map((a: Annex) => a.clause.asInstanceOf[GclSubclause])
           if (gclAnnexes.nonEmpty) {
-            reporter.error(b.container.get.identifier.pos, toolName, "GCL subclauses cannot be attached to Base Type definitions")
+            reportError(b.container.get.identifier.pos, "GCL subclauses cannot be attached to Base Type definitions", reporter)
           }
 
           return ta
@@ -2694,7 +2820,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
       val gclAnnexes = component.annexes.filter((a: Annex) => a.clause.isInstanceOf[GclSubclause]).map((a: Annex) => a.clause.asInstanceOf[GclSubclause])
 
       if (gclAnnexes.size > 1) {
-        reporter.error(a.component.identifier.pos, toolName, "Only a single GCL subclause is allowed per component type/implementation")
+        reportError(a.component.identifier.pos, "Only a single GCL subclause is allowed per component type/implementation", reporter)
       }
 
       // treat stateVars as if they were features for Tipe
@@ -2967,6 +3093,249 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
       return infoObject
     }
 
+    def buildInfoObjectForSystem(a: AadlSystem): Info.Object = {
+
+      val component = a.component
+      val sysName = a.classifier
+
+      if (globalNameMap.contains(sysName)) {
+        return globalNameMap.get(sysName).get.asInstanceOf[Info.Object]
+      }
+
+      val sysOwner = ops.ISZOps(sysName).dropRight(1)
+      val sysSimpleName = a.classifier(a.classifier.lastIndex)
+
+      val sysId = AST.Id(
+        value = sysSimpleName,
+        attr = AST.Attr(component.identifier.pos))
+
+      val posOpt = a.component.identifier.pos
+
+      buildPackageInfo(sysOwner, posOpt)
+
+      val sysScope = scope(sysOwner, globalImports(sysOwner), sysName)
+
+      val gclAnnexes = component.annexes.filter((ann: Annex) => ann.clause.isInstanceOf[GclSubclause]).map((ann: Annex) => ann.clause.asInstanceOf[GclSubclause])
+
+      val methods: HashSMap[String, Info] = {
+        var _methods: HashSMap[String, Info] = HashSMap.empty
+
+        val specDefs: ISZ[(String, Info)] = gclAnnexes.flatMap((g: GclSubclause) =>
+          g.methods.map((gclMethod: GclMethod) => {
+
+            val fqMethodName = sysName :+ gclMethod.sig.id.value
+
+            buildInfoMethod(gclMethod, sysName, sysScope) match {
+              case i: Info.Method =>
+                resolvedBodyMethods = resolvedBodyMethods + (fqMethodName ~> i)
+                (gclMethod.sig.id.value, i)
+              case i: Info.SpecMethod =>
+                (gclMethod.sig.id.value, i)
+              case x =>
+                halt(s"Infeasible: $x")
+            }
+          }))
+
+        _methods ++ specDefs
+      }
+
+      for (m <- methods.values) {
+        declareName(
+          entity = "method",
+          name = m.name,
+          info = m,
+          posOpt = m.posOpt,
+          reporter = reporter)
+      }
+
+      // Declare port aliases as vars so composition property assertions can
+      // reference them. A system may declare several compositions; aliases with
+      // the same name must agree across them (they share the system's namespace).
+      val sysPackageName = sysOwner
+      val sysInstancePath = a.component.identifier.name
+      for (gclSubclause <- gclAnnexes) {
+        for (comp <- gclSubclause.compositions) {
+            for (ca <- comp.componentAliases) {
+              val fullComponentPath = sysInstancePath ++ ca.componentPath.name
+              symbolTable.componentMap.get(fullComponentPath) match {
+                case Some(_) =>
+                  resolvedComponentAliasMap.get(ca.name) match {
+                    case Some(existing) =>
+                      if (existing != fullComponentPath) {
+                        reportError(ca.posOpt, s"Component alias '${ca.name}' is already bound to ${(existing, ".")} by another composition", reporter)
+                      }
+                    case _ =>
+                      resolvedComponentAliasMap = resolvedComponentAliasMap + ca.name ~> fullComponentPath
+                  }
+                case _ =>
+                  reportError(ca.posOpt, s"Component alias '${ca.name}' does not resolve to a valid component at path ${(fullComponentPath, ".")}", reporter)
+              }
+            }
+
+            for (pa <- comp.portAliases) {
+              val pathSegments = pa.portPath.name
+              if (pathSegments.size >= 2) {
+                val componentRef = pathSegments(0)
+                val portName = pathSegments(pathSegments.size - 1)
+                val middleSegments: ISZ[String] = if (pathSegments.size > 2) ops.ISZOps(pathSegments).slice(1, pathSegments.size - 1) else ISZ()
+
+                val fullFeaturePath: ISZ[String] = resolvedComponentAliasMap.get(componentRef) match {
+                  case Some(fullPath) => fullPath ++ middleSegments :+ portName
+                  case _ => sysInstancePath ++ ISZ(componentRef) ++ middleSegments :+ portName
+                }
+                symbolTable.featureMap.get(fullFeaturePath) match {
+                  case Some(port: AadlPort) =>
+                    val fieldAadlType: AadlType = port match {
+                      case afd: AadlFeatureData => afd.aadlType
+                      case _ => TypeUtil.EmptyType
+                    }
+
+                    val qualifiedFieldName = sysName :+ pa.name
+
+                    val fieldResInfoOpt = Some[AST.ResolvedInfo](
+                      AST.ResolvedInfo.Var(isInObject = T, isSpec = F, isVal = F, owner = sysName, id = pa.name, defPosOpt = None()))
+
+                    val fieldType = resolveTypeH(fieldAadlType, pa.posOpt)
+
+                    val infoVar = Info.Var(
+                      owner = sysName,
+                      isInObject = T,
+                      scope = scope(
+                        packageName = sysPackageName,
+                        imports = globalImports(sysPackageName),
+                        enclosingName = sysName),
+                      ast = AST.Stmt.Var(
+                        isSpec = F,
+                        isVal = F,
+                        id = AST.Id(value = pa.name, attr = AST.Attr(pa.posOpt)),
+                        tipeOpt = Some(fieldType),
+                        initOpt = None(),
+                        annotations = ISZ(),
+                        attr = ResolvedAttr(posOpt = pa.posOpt, resOpt = fieldResInfoOpt,
+                          typedOpt = Some(fieldType.attr.typedOpt.get))
+                      )
+                    )
+
+                    // identical aliases may be shared by several compositions;
+                    // declare once
+                    if (!globalNameMap.contains(qualifiedFieldName)) {
+                      declareName(pa.name, qualifiedFieldName, infoVar, pa.posOpt, reporter)
+                    }
+
+                  case _ =>
+                    reportError(pa.posOpt, s"Could not resolve port alias '${pa.name}' to a port at path ${(fullFeaturePath, ".")}", reporter)
+                }
+              } else {
+                reportError(pa.posOpt, s"Port alias '${pa.name}' path must have at least two segments (component.port)", reporter)
+              }
+            }
+
+            for (sva <- comp.stateVarAliases) {
+              val pathSegments = sva.stateVarPath.name
+              if (pathSegments.size >= 2) {
+                val componentRef = pathSegments(0)
+                val stateVarName = pathSegments(pathSegments.size - 1)
+                val middleSegments: ISZ[String] = if (pathSegments.size > 2) ops.ISZOps(pathSegments).slice(1, pathSegments.size - 1) else ISZ()
+
+                val fullComponentPath: ISZ[String] = resolvedComponentAliasMap.get(componentRef) match {
+                  case Some(fullPath) => fullPath ++ middleSegments
+                  case _ => sysInstancePath ++ ISZ(componentRef) ++ middleSegments
+                }
+                symbolTable.componentMap.get(fullComponentPath) match {
+                  case Some(targetComponent) =>
+                    val gclSubclauses = targetComponent.component.annexes
+                      .filter((ann: Annex) => ann.clause.isInstanceOf[GclSubclause])
+                      .map((ann: Annex) => ann.clause.asInstanceOf[GclSubclause])
+
+                    val stateVarOpt: Option[GclStateVar] = {
+                      var found: Option[GclStateVar] = None()
+                      for (gs <- gclSubclauses if found.isEmpty) {
+                        for (sv <- gs.state if sv.name == stateVarName && found.isEmpty) {
+                          found = Some(sv)
+                        }
+                      }
+                      found
+                    }
+
+                    stateVarOpt match {
+                      case Some(sv) =>
+                        val fieldAadlType = getAadlType(sv.classifier, aadlTypes, sva.posOpt, reporter)
+
+                        val qualifiedFieldName = sysName :+ sva.name
+
+                        val fieldResInfoOpt = Some[AST.ResolvedInfo](
+                          AST.ResolvedInfo.Var(isInObject = T, isSpec = F, isVal = F, owner = sysName, id = sva.name, defPosOpt = None()))
+
+                        val fieldType = resolveTypeH(fieldAadlType, sva.posOpt)
+
+                        val infoVar = Info.Var(
+                          owner = sysName,
+                          isInObject = T,
+                          scope = scope(
+                            packageName = sysPackageName,
+                            imports = globalImports(sysPackageName),
+                            enclosingName = sysName),
+                          ast = AST.Stmt.Var(
+                            isSpec = F,
+                            isVal = F,
+                            id = AST.Id(value = sva.name, attr = AST.Attr(sva.posOpt)),
+                            tipeOpt = Some(fieldType),
+                            initOpt = None(),
+                            annotations = ISZ(),
+                            attr = ResolvedAttr(posOpt = sva.posOpt, resOpt = fieldResInfoOpt,
+                              typedOpt = Some(fieldType.attr.typedOpt.get))
+                          )
+                        )
+
+                        // identical aliases may be shared by several
+                        // compositions; declare once
+                        if (!globalNameMap.contains(qualifiedFieldName)) {
+                          declareName(sva.name, qualifiedFieldName, infoVar, sva.posOpt, reporter)
+                        }
+
+                      case _ =>
+                        reportError(sva.posOpt, s"Could not find state variable '${stateVarName}' on component at path ${(fullComponentPath, ".")}", reporter)
+                    }
+
+                  case _ =>
+                    reportError(sva.posOpt, s"Could not resolve state var alias '${sva.name}' to a component at path ${(fullComponentPath, ".")}", reporter)
+                }
+              } else {
+                reportError(sva.posOpt, s"State var alias '${sva.name}' path must have at least two segments (component.statevar)", reporter)
+              }
+            }
+        }
+      }
+
+      val infoObject = Info.Object(
+        owner = sysOwner,
+        isSynthetic = F,
+        scope = sysScope,
+        outlined = T,
+        contractOutlined = T,
+        typeChecked = T,
+        ast = AST.Stmt.Object(
+          isApp = F,
+          extNameOpt = None(),
+          id = sysId,
+          stmts = ISZ(),
+          annotations = ISZ(),
+          attr = AST.Attr(component.identifier.pos)),
+        typedOpt = Some(AST.Typed.Object(sysOwner, sysSimpleName)),
+        resOpt = Some(AST.ResolvedInfo.Object(sysName, None())),
+        constructorRes = AST.ResolvedInfo.Method(F, AST.MethodMode.ObjectConstructor, ISZ(), sysName, sysSimpleName, ISZ(), None(), ISZ(), ISZ(), None())
+      )
+
+      declareName(
+        entity = "object",
+        name = sysName,
+        info = infoObject,
+        posOpt = infoObject.posOpt,
+        reporter = reporter)
+
+      return infoObject
+    }
+
     def buildAdtTypeInfo(a: AadlData): TypeInfo.Adt = {
 
       val adtQualifiedName = a.classifier
@@ -2981,9 +3350,6 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
 
       val posOpt = a.component.identifier.pos
 
-      // build Slang package from AADL package
-      buildPackageInfo(packageName, posOpt)
-
       // enclosingName is the same as the packageName
       val adtScope = scope(packageName, globalImports(packageName), packageName)
 
@@ -2994,25 +3360,25 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
       val gclAnnexes = a.component.annexes.filter((a: Annex) => a.clause.isInstanceOf[GclSubclause]).map((a: Annex) => a.clause.asInstanceOf[GclSubclause])
 
       if (gclAnnexes.size > 1) {
-        reporter.error(a.component.identifier.pos, toolName, "Only a single GCL subclause is allowed per component type/implementation")
+        reportError(a.component.identifier.pos, "Only a single GCL subclause is allowed per component type/implementation", reporter)
       } else if (gclAnnexes.nonEmpty) {
         if (gclAnnexes(0).state.nonEmpty) {
-          reporter.error(a.component.identifier.pos, toolName, s"Not expecting a data component to have state vars")
+          reportError(a.component.identifier.pos, s"Not expecting a data component to have state vars", reporter)
         }
         if (gclAnnexes(0).methods.nonEmpty) {
-          reporter.error(a.component.identifier.pos, toolName, s"Not expecting a data component to have GUMBO methods")
+          reportError(a.component.identifier.pos, s"Not expecting a data component to have GUMBO methods", reporter)
         }
         if (gclAnnexes(0).initializes.nonEmpty) {
-          reporter.error(a.component.identifier.pos, toolName, s"Not expecting a data component to have initialize clauses")
+          reportError(a.component.identifier.pos, s"Not expecting a data component to have initialize clauses", reporter)
         }
         if (gclAnnexes(0).integration.nonEmpty) {
-          reporter.error(a.component.identifier.pos, toolName, s"Not expecting a data component to have integration clauses")
+          reportError(a.component.identifier.pos, s"Not expecting a data component to have integration clauses", reporter)
         }
         if (gclAnnexes(0).compute.nonEmpty) {
-          reporter.error(a.component.identifier.pos, toolName, s"Not expecting a data component to have compute clauses")
+          reportError(a.component.identifier.pos, s"Not expecting a data component to have compute clauses", reporter)
         }
         if (gclAnnexes(0).invariants.isEmpty) {
-          reporter.error(a.component.identifier.pos, toolName, s"Expected a datatype invariant")
+          reportError(a.component.identifier.pos, s"Expected a datatype invariant", reporter)
         }
       }
 
@@ -3050,7 +3416,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
             case _ => ""
           }
           val msg = s"Cannot redeclare feature '$paramId'${prev}"
-          reporter.error(param.feature.identifier.pos, toolName, msg)
+          reportError(param.feature.identifier.pos, msg, reporter)
         }
 
         val paramResInfoOpt = Some[AST.ResolvedInfo](
@@ -3266,6 +3632,17 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
         buildInfoObject(component)
       }
     }
+
+    { // build type info for system implementations with GUMBO annexes
+      val systemComponents = symbolTable.componentMap.values.filter((m: AadlComponent) => m.isInstanceOf[AadlSystem]).map((m: AadlComponent) => m.asInstanceOf[AadlSystem])
+
+      for (sys <- systemComponents) {
+        val gclAnnexes = sys.component.annexes.filter((a: Annex) => a.clause.isInstanceOf[GclSubclause])
+        if (gclAnnexes.nonEmpty) {
+          buildInfoObjectForSystem(sys)
+        }
+      }
+    }
   }
 
   def offer(component: AadlComponent, annex: Annex, annexLibs: ISZ[AnnexLibInfo], symbolTable: SymbolTable, aadlTypes: AadlTypes, store: Store, reporter: Reporter): (Option[AnnexClauseInfo], Store) = {
@@ -3290,22 +3667,29 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
                     scope = scope(localThisOpt = Some(info.tpe))
                     scope
                   case x =>
-                    reporter.error(None(), toolName, s"Expecting ${qualifiedName} to resolve to an ADT but found ${x}")
+                    reportError(None(), s"Expecting ${qualifiedName} to resolve to an ADT but found ${x}", reporter)
                     return (None(), store)
                 }
               case _ =>
-                reporter.error(None(), toolName, s"Could not resolve type info for GCl Subclause: ${qualifiedName}")
+                reportError(None(), s"Could not resolve type info for GCl Subclause: ${qualifiedName}", reporter)
                 return (None(), store)
             }
           case ac: AadlThread =>
             globalNameMap.get(qualifiedName) match {
               case Some(o: Info.Object) => Scope.Local.create(HashMap.empty, o.scope)
               case _ =>
-                reporter.error(None(), toolName, s"Could not resolve name for GCL Subclause: ${qualifiedName}")
+                reportError(None(), s"Could not resolve name for GCL Subclause: ${qualifiedName}", reporter)
+                return (None(), store)
+            }
+          case as: AadlSystem =>
+            globalNameMap.get(qualifiedName) match {
+              case Some(o: Info.Object) => Scope.Local.create(HashMap.empty, o.scope)
+              case _ =>
+                reportError(None(), s"Could not resolve name for GCL Subclause: ${qualifiedName}", reporter)
                 return (None(), store)
             }
           case c =>
-            reporter.error(c.component.identifier.pos, toolName, s"GUMBO subclause contracts can only be attached to threads and data components")
+            reportError(c.component.identifier.pos, s"GUMBO subclause contracts can only be attached to threads, data, and system implementation components", reporter)
             return (None(), store)
         }
 
@@ -3325,7 +3709,8 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
 
     val s1 = GclResolver.putIndexingTypeFingerprints(indexingTypeFingerprints, store)
     val s2 = GclResolver.putSlangTypeToAadlType(slangTypeToAadlType, s1)
-    return (result, s2)
+    val s3 = GclResolver.putResolvedComponentAliasMap(resolvedComponentAliasMap, s2)
+    return (result, s3)
   }
 
   def offerLibraries(annexLibs: ISZ[AnnexLib], symbolTable: SymbolTable, aadlTypes: AadlTypes, store:Store, reporter: Reporter): (ISZ[AnnexLibInfo], Store) = {
@@ -3360,7 +3745,7 @@ import org.sireum.hamr.codegen.common.resolvers.GclResolver._
             }
 
           case _ =>
-            reporter.error(None(), toolName, st"Could not resolve GCL Library: ${(qualifiedName, "::")}".render)
+            reportError(None(), st"Could not resolve GCL Library: ${(qualifiedName, "::")}".render, reporter)
         }
       }
     }
