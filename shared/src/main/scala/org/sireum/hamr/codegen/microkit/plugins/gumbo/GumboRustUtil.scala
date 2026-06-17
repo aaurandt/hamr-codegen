@@ -32,6 +32,8 @@ object GumboRustUtil {
 
     val gumboMethods: String = "MARKER GUMBO METHODS"
 
+    val gumboMonitor: String = "MARKER R2U2 MONITOR"
+
     val gumboLibVerus: String = "MARKER GUMBO VERUS MARKER"
     val gumboLibRust: String = "MARKER GUMBO RUST MARKER"
   }
@@ -73,6 +75,7 @@ object GumboRustUtil {
             initializes = None(),
             integration = None(),
             compute = None(),
+            monitor = None(),
             compositions = ISZ(),
             attr = Attr(None())),
           gclSymbolTable = GclSymbolTable(
@@ -169,6 +172,39 @@ object GumboRustUtil {
       st"""// $typ ${spec.id}
           |${GumboRustUtil.processDescriptor(spec.descriptor, "//   ")}
           |$verusExp""")
+  }
+
+  @pure def processGumboSpecC2PO(spec: GclSpec,
+
+                             component: AadlComponent,
+                             context: Context.Type,
+
+                             isAssumeRequires: B,
+
+                             types: AadlTypes,
+                             tp: CRustTypeProvider,
+                             gclSymbolTable: GclSymbolTable,
+                             store: Store,
+                             reporter: Reporter): RAST.Expr = {
+    // To-Do: Edit SlangExpUtil to return C2PO format
+    val c2poExp =
+      SlangExpUtil.rewriteExpH(
+        rexp = spec.exp,
+
+        owner = component.classifier,
+        optComponent = Some(component),
+        context = context,
+
+        inRequires = isAssumeRequires,
+        inVerus = T,
+        substitutions = Map.empty,
+        aadlTypes = types,
+        tp = tp,
+        store = store,
+        reporter = reporter)
+    return RAST.ExprST(
+      st"""${st"\t${GumboRustUtil.processDescriptor(spec.descriptor, "-- ")}"}
+          |${spec.id}: ${c2poExp};""")
   }
 
   @pure def processGumboCase(c: GclCaseStatement,

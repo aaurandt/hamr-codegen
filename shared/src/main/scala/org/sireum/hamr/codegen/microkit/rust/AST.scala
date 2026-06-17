@@ -191,6 +191,20 @@ object Printers {
   }
 }
 
+@datatype class R2U2SpecDef(val inputs: ISZ[Item],
+                          val ftspecs: ISZ[Item],
+                          val ptspecs: ISZ[Item]) extends Item {
+  @pure override def prettyST: ST = {
+    return (
+      st"""INPUT
+          |${st"\t${printItems(inputs, "\n")}"}
+          |
+          |${if (ftspecs.nonEmpty) st"FTSPEC \n${printItems(ftspecs, "\n")}\n" else ""}
+          |${if (ptspecs.nonEmpty) st"PTSPEC \n${printItems(ptspecs, "\n")}\n" else ""}
+          |""")
+  }
+}
+
 @datatype class MarkerPlaceholder(val marker: PlaceholderMarker) extends Item {
   @pure def prettyST: ST = {
     return st"${marker.marker}"

@@ -42,11 +42,12 @@ object ComponentContributions {}
 
                                         // items for component/<thread-path>_app.rs
                                         val requiresVerus: B,
+                                        val requiresR2U2: B,
                                         val appModDirectives: ISZ[RAST.Item],
                                         val appUses: ISZ[RAST.Item],
                                         val appStructDef: RAST.StructDef,
                                         val appStructImpl: RAST.Impl,
-
+                                        val appR2U2SpecDef: Option[RAST.R2U2SpecDef],
                                         val moduleLevelEntries: ISZ[RAST.Item],
 
                                         // items for Cargo.toml's [dependencies] table
@@ -192,6 +193,8 @@ object ComponentContributions {}
         items = ISZ[RAST.Item](newFn, initFn) ++ entrypointFns :+ notify,
         comments = ISZ(), attributes = ISZ(), implIdent = None())
 
+      val r2u2Spec: Option[RAST.R2U2SpecDef] = None()
+
       var funcs: ISZ[RAST.Item] = ISZ()
 
       funcs = funcs :+ RAST.FnImpl(
@@ -228,10 +231,12 @@ object ComponentContributions {}
         ComponentContributions(
           markers = ISZ(),
           requiresVerus = F,
+          requiresR2U2 = F,
           appModDirectives = modDirectives,
           appUses = uses,
           appStructDef = struct,
           appStructImpl = impl,
+          appR2U2SpecDef = r2u2Spec,
           moduleLevelEntries = funcs,
           crateDependencies = ISZ())
 
@@ -423,7 +428,9 @@ object ComponentContributions {}
             macName = "verus",
             items = ISZ(RAST.ItemST(body))).prettyST
         }
-
+        if (e._2.requiresR2U2) {
+          uses = uses :+ RAST.Use(ISZ(), RAST.IdentString("crate::component::spec::SPEC"))
+        }
         val content =
           st"""${(for (d <- e._2.appModDirectives) yield d.prettyST, "\n")}
               |
@@ -447,9 +454,35 @@ object ComponentContributions {}
           st"""${CommentTemplate.safeToEditComment_slash}
               |
               |pub mod $modName;
+              |${if (e._2.requiresR2U2) "pub mod spec;" else ""}
               |"""
         val path = s"$componentDir/mod.rs"
         resources = resources :+ ResourceUtil.createResource(path, content, F)
+      }
+
+      { // src/monitor/spec.c2po + src/monitor/spec.map
+        if (e._2.requiresR2U2){
+          val content =
+            st"""${CommentTemplate.doNotEditComment_c2po}
+                 |
+                 |${e._2.appR2U2SpecDef.get.prettyST}
+                 |"""
+          val path = s"$componentDir/spec.c2po"
+          resources = resources :+ ResourceUtil.createResource(path, content, T)
+        }
+      }
+
+      { // src/monitor/spec.rs
+        if (e._2.requiresR2U2){
+          val content =
+            st"""${CommentTemplate.doNotEditComment_slash}
+                 |
+                 |pub const SPEC: [u8; 1] = [
+                 |0x01
+                 |];"""
+          val path = s"$componentDir/spec.rs"
+          resources = resources :+ ResourceUtil.createResource(path, content, T)
+        }
       }
 
       { // Cargo.toml
@@ -477,6 +510,7 @@ object ComponentContributions {}
               |
               |${RustUtil.verusCargoDependencies(localStore)}
               |
+              |${if (e._2.requiresR2U2) RustUtil.r2u2CargoDependencies(localStore) else ""}
               |
               |[dev-dependencies]
               |lazy_static = "${versions.get("lazy_static").get}"
