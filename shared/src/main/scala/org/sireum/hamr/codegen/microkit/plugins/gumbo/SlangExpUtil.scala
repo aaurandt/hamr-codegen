@@ -24,6 +24,13 @@ object SlangExpUtil {
     val BiImplication: String = "<==>"
   }
 
+  @enum object TargetLanguage {
+    "rust"
+    "verus"
+    "C2PO"
+    // Add your new target here!
+  }
+
   @enum object Context {
     "integration_constraint"
     "initialize_clause"
@@ -43,13 +50,13 @@ object SlangExpUtil {
                        context: Context.Type,
 
                        inRequires: B,
-                       inVerus: B, // verus or GUMBOX
+                       target: TargetLanguage.Type,
 
                        tp: CRustTypeProvider,
                        aadlTypes: AadlTypes,
                        store: Store,
                        reporter: Reporter): ST = {
-    return rewriteExpH(rexp, owner, optComponent, context, Map.empty, inRequires, inVerus, tp, aadlTypes, store, reporter)
+    return rewriteExpH(rexp, owner, optComponent, context, Map.empty, inRequires, target, tp, aadlTypes, store, reporter)
   }
 
   @pure def rewriteExpH(rexp: Exp,
@@ -61,13 +68,13 @@ object SlangExpUtil {
                         substitutions: Map[String, String],
 
                         inRequires: B,
-                        inVerus: B,
+                        target: TargetLanguage.Type,
 
                         tp: CRustTypeProvider,
                         aadlTypes: AadlTypes,
                         store: Store,
                         reporter: Reporter): ST = {
-    return rewriteExpHL(rexp, owner, optComponent, context, substitutions, inRequires, inVerus, F, F, tp, aadlTypes, store, reporter)
+    return rewriteExpHL(rexp, owner, optComponent, context, substitutions, inRequires, target, F, F, tp, aadlTypes, store, reporter)
   }
 
   @pure def rewriteExpHL(rexp: Exp,
@@ -79,7 +86,7 @@ object SlangExpUtil {
                          substitutions: Map[String, String],
 
                          inRequires: B,
-                         inVerus: B,
+                         target: TargetLanguage.Type,
 
                          alwaysOneLine: B, // don't add newlines, useful when testing
                          isTesting: B, // true when invoking from testing context
@@ -95,7 +102,7 @@ object SlangExpUtil {
     var appliedTrigger: B = F
 
     @pure def applyTrigger(rewrittenExp: ST, posOpt: Option[Position]): ST = {
-      if (inVerus && !appliedTrigger && expressionContainsQuantifier && quantifierUsedInIndexingExpr) {
+      if (target == TargetLanguage.verus && !appliedTrigger && expressionContainsQuantifier && quantifierUsedInIndexingExpr) {
         expressionContainsQuantifier = F
         quantifierUsedInIndexingExpr = F
         appliedTrigger = T
@@ -222,7 +229,7 @@ object SlangExpUtil {
                         case ISZ(aadlPackageName, "GUMBO__Library") =>
                           // making a call to a gumbo library annex function
 
-                          val id: String = s"${exp.ident.id.value}${if (inVerus) "_spec" else ""}"
+                          val id: String = s"${exp.ident.id.value}${if (target == TargetLanguage.verus) "_spec" else ""}"
 
                           if (m.owner == owner) {
                             return st"$id(${(args, ", ")})"
@@ -236,7 +243,7 @@ object SlangExpUtil {
                           optComponent match {
                             case Some(component) =>
                               if (component.classifier == m.owner) {
-                                if(!inVerus) {
+                                if(target == TargetLanguage.rust) {
                                   // emitting GUMBOX, call local GUMBOX function
                                   return st"$id(${(args, ", ")})"
                                 } else {
@@ -298,7 +305,7 @@ object SlangExpUtil {
                       } else {
                         exp.ident.attr.resOpt match {
                           case Some(v: SAST.ResolvedInfo.Var)
-                            if inVerus && receiverOpt.isEmpty &&
+                            if target == TargetLanguage.verus && receiverOpt.isEmpty &&
                               context != Context.library_function && context != Context.subclause_function =>
                             // state var or port being used in GUMBOX context
 
@@ -345,7 +352,7 @@ object SlangExpUtil {
         case exp: Exp.Ident =>
           exp.resOpt match {
             case Some(x: SAST.ResolvedInfo.Var) =>
-              if (!inVerus) {
+              if (target == TargetLanguage.rust) {
                 return st"${exp.id.prettyST}"
               } else {
                 if (inRequires) {
@@ -359,7 +366,7 @@ object SlangExpUtil {
                 }
               }
             case Some(x: SAST.ResolvedInfo.LocalVar) =>
-              if (inVerus && ops.ISZOps(quantifiers.elements).contains(x.id) && !appliedTrigger) {
+              if (target == TargetLanguage.verus && ops.ISZOps(quantifiers.elements).contains(x.id) && !appliedTrigger) {
                 expressionContainsQuantifier = T
               }
               return exp.id.prettyST
@@ -410,7 +417,7 @@ object SlangExpUtil {
           val body = nestedRewriteExp(exp.fun.exp.asInstanceOf[SAST.Stmt.Expr].exp, None())
           quantifiers = quantifiers.pop.get._2
 
-           if (inVerus) {
+           if (target == TargetLanguage.verus) {
             val quantType: String = if (exp.isForall) "forall" else "exists"
 
              val op: String = if (exp.isForall) "==>" else "&&"
@@ -473,7 +480,7 @@ object SlangExpUtil {
               optComponent match {
                 case Some(component) =>
                   if (component.classifier == m.owner) {
-                    if(!inVerus) {
+                    if(target == TargetLanguage.rust) {
                       // emitting GUMBOX, call local GUMBOX function
                       st""
                     } else {
@@ -535,12 +542,12 @@ object SlangExpUtil {
     @pure def shouldParenthesize(slangParentOp: String, parentPosOpt: Option[Position],
                                  slangChildOp: String, childPosOpt: Option[Position], isRightChild: B): B = {
       val slangParentPrecedence = Exp.BinaryOp.precendenceLevel(slangParentOp)
-      val verusRustParentOp = convertBinaryOp(inVerus, slangParentOp, parentPosOpt)
+      val verusRustParentOp = convertBinaryOp(TargetLanguage.verus, slangParentOp, parentPosOpt)
       val verusRustParentPrecedence = rustPrecendenceLevel(verusRustParentOp)
 
       val slangChildPrecedence = Exp.BinaryOp.precendenceLevel(slangChildOp)
-      val rustChildOp = convertBinaryOp(F, slangChildOp, childPosOpt)
-      val verusRustChildOp = convertBinaryOp(inVerus, slangChildOp, childPosOpt)
+      val rustChildOp = convertBinaryOp(TargetLanguage.rust, slangChildOp, childPosOpt)
+      val verusRustChildOp = convertBinaryOp(TargetLanguage.verus, slangChildOp, childPosOpt)
       val verusRustChildPrecedence = rustPrecendenceLevel(verusRustChildOp)
 
       // rust requires comparison expressions to be explicitly parenthesized
@@ -598,7 +605,7 @@ object SlangExpUtil {
       return F
     }
 
-    @pure def convertBinaryOp(convertingToVerus: B, op: String, posOpt: Option[Position]) : String = {
+    @pure def convertBinaryOp(target: TargetLanguage.Type, op: String, posOpt: Option[Position]) : String = {
       op match {
         case Exp.BinaryOp.Add => return op // +
         case Exp.BinaryOp.Sub => return op // -
@@ -619,17 +626,17 @@ object SlangExpUtil {
 
         case Exp.BinaryOp.And => // &
           return (
-            if (convertingToVerus) Exp.BinaryOp.CondAnd
+            if (target == TargetLanguage.verus) Exp.BinaryOp.CondAnd
             else op)
 
         case Exp.BinaryOp.Or => // |
           return (
-            if (convertingToVerus) Exp.BinaryOp.CondOr
+            if (target == TargetLanguage.verus) Exp.BinaryOp.CondOr
             else op)
 
         case Exp.BinaryOp.Imply => // __>:
           return (
-            if (convertingToVerus) Exp.BinaryOp.CondImply
+            if (target == TargetLanguage.verus) Exp.BinaryOp.CondImply
             else op)
 
         case Exp.BinaryOp.CondImply => return op // ___>:
@@ -739,13 +746,13 @@ object SlangExpUtil {
       }
 
       // now convert logical operators if in verus (e.g. & becomes &&)
-      val verusRustParentOp: String = convertBinaryOp(inVerus, slangParentOp, parentPos) match {
+      val verusRustParentOp: String = convertBinaryOp(TargetLanguage.verus, slangParentOp, parentPos) match {
         case Exp.BinaryOp.Xor => "^"
         case Exp.BinaryOp.CondImply => "==>"
         case op => op
       }
 
-      if ((!inVerus || isTesting) && (verusRustParentOp == "==>" || verusRustParentOp == Exp.BinaryOp.Imply)) {
+      if ((target == TargetLanguage.rust || isTesting) && (verusRustParentOp == "==>" || verusRustParentOp == Exp.BinaryOp.Imply)) {
         val functionName: String =
           if (verusRustParentOp == "==>") "implies!"
           else "impliesL!"

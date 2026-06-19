@@ -4,10 +4,11 @@ package org.sireum.hamr.codegen.microkit.plugins.gumbo
 import org.sireum._
 import org.sireum.hamr.codegen.common.CommonUtil._
 import org.sireum.hamr.codegen.common.containers.{Marker, Resource}
+import org.sireum.hamr.codegen.common.resolvers.GclResolver
 import org.sireum.hamr.codegen.common.symbols._
 import org.sireum.hamr.codegen.common.types.{AadlType, AadlTypes}
 import org.sireum.hamr.codegen.common.util.{HamrCli, ResourceUtil}
-import SlangExpUtil.Context
+import SlangExpUtil.{Context, TargetLanguage}
 import org.sireum.hamr.codegen.common.templates.CommentTemplate
 import org.sireum.hamr.codegen.microkit.plugins.linters.MicrokitLinterPlugin
 import org.sireum.hamr.codegen.microkit.plugins.rust.apis.CRustApiPlugin
@@ -295,7 +296,7 @@ object GumboRustPlugin {
                 optComponent = Some(thread),
                 isLibraryMethod = F,
 
-                inVerus = T,
+                target = TargetLanguage.verus,
                 options = options,
 
                 aadlTypes = types,
@@ -316,7 +317,7 @@ object GumboRustPlugin {
                 optComponent = Some(thread),
                 isLibraryMethod = F,
 
-                inVerus = T,
+                target = TargetLanguage.verus,
                 options = options,
 
                 aadlTypes = types,
@@ -584,7 +585,7 @@ object GumboRustPlugin {
             optComponent = None(),
             isLibraryMethod = T,
 
-            inVerus = T,
+            target = TargetLanguage.verus,
             options = options,
 
             aadlTypes = types,
@@ -604,7 +605,7 @@ object GumboRustPlugin {
             optComponent = None(),
             isLibraryMethod = T,
 
-            inVerus = T,
+            target = TargetLanguage.verus,
             options = options,
 
             aadlTypes = types,
