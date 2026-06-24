@@ -7,7 +7,7 @@ import org.sireum.hamr.codegen.common.containers.{BlockMarker, Marker, Placehold
 import org.sireum.hamr.codegen.microkit.rust.Printers._
 
 object Printers {
-  def printItems(items: ISZ[Item], sep: String): Option[ST] = {
+  def printItems[T <: Item](items: ISZ[T], sep: String): Option[ST] = {
     return if (items.nonEmpty) Some(st"${(for(i <- items) yield i.prettyST, sep)}") else None()
   }
 
