@@ -4,6 +4,7 @@ package org.sireum.hamr.codegen.microkit.rust
 import org.sireum._
 import org.sireum.hamr.codegen.common.CommonUtil.{IdPath, isThread}
 import org.sireum.hamr.codegen.common.containers.{BlockMarker, Marker, PlaceholderMarker}
+import org.sireum.hamr.codegen.microkit.plugins.gumbo.GumboC2POUtil.C2POType
 import org.sireum.hamr.codegen.microkit.rust.Printers._
 
 object Printers {
@@ -191,7 +192,15 @@ object Printers {
   }
 }
 
-@datatype class R2U2SpecDef(val inputs: ISZ[Item],
+@datatype class R2U2InputDef(val name: String,
+                            val type_dec: C2POType.Type,
+                            val idx: Int) extends Item {
+  @pure override def prettyST: ST = {
+    return (st"""${name}: ${type_dec};""")
+  }
+}
+
+@datatype class R2U2SpecDef(val inputs: ISZ[R2U2InputDef],
                           val ftspecs: ISZ[Item],
                           val ptspecs: ISZ[Item]) extends Item {
   @pure override def prettyST: ST = {

@@ -874,8 +874,10 @@ object GumboRustPlugin {
           ptspecs = ISZ()
     )
 
+    var allVariablesInSpecs: Map[String, (RAST.Expr, GumboC2POUtil.C2POType.Type)] = Map.empty
+
     for (r <- subclauseInfo.annex.monitor.get.guarantees) {
-      val spec: RAST.Expr = GumboRustUtil.processGumboSpecC2PO(
+      val (spec, variablesInSpec) = GumboRustUtil.processGumboSpecC2PO(
         spec = r,
         component = thread,
         context = Context.monitor_clause,
@@ -886,9 +888,15 @@ object GumboRustPlugin {
         store = store,
         reporter = reporter)
       specs = specs(ftspecs = specs.ftspecs :+ RAST.ItemST(spec.prettyST))
+      allVariablesInSpecs = allVariablesInSpecs ++ variablesInSpec.entries
     }
 
-
+    var idx = 0
+    for ( (exp_name, (exp, exp_type)) <- allVariablesInSpecs.entries){
+      specs = specs(inputs = specs.inputs :+ RAST.R2U2InputDef(exp_name, exp_type, idx.toInt))
+      idx += 1
+      println(s">> DEBUG PLUGIN: [${exp_name}] is ${exp.prettyST} of type ${exp_type}")
+    }
 
     val m = Marker.createSlashMarker(GumboRustUtil.GumboMarkers. gumboMonitor)
     val markers: ISZ[Marker] = ISZ(m)

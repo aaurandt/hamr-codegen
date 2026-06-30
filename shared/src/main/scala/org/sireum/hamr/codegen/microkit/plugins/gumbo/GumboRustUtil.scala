@@ -6,12 +6,10 @@ import org.sireum.hamr.codegen.common.CommonUtil.{IdPath, Store}
 import org.sireum.hamr.codegen.common.{STUtil, StringUtil}
 import org.sireum.hamr.codegen.common.util.HamrCli
 import org.sireum.hamr.codegen.common.symbols.{AadlComponent, AadlThread, GclAnnexClauseInfo, GclSymbolTable, SymbolTable}
-import org.sireum.hamr.codegen.common.types.AadlTypes
-import SlangExpUtil.Context
-import SlangExpUtil.TargetLanguage
+import org.sireum.hamr.codegen.common.types.{AadlTypes, SlangType}
+import SlangExpUtil.{Context, TargetLanguage}
 import org.sireum.hamr.codegen.microkit.plugins.rust.component.CRustComponentPlugin
 import org.sireum.hamr.codegen.microkit.plugins.rust.types.{CRustTypeNameProvider, CRustTypeProvider}
-import org.sireum.hamr.codegen.microkit.rust.FnVerusHeader
 import org.sireum.hamr.codegen.microkit.types.MicrokitTypeUtil
 import org.sireum.hamr.codegen.microkit.{rust => RAST}
 import org.sireum.hamr.ir._
@@ -186,11 +184,13 @@ object GumboRustUtil {
                              tp: CRustTypeProvider,
                              gclSymbolTable: GclSymbolTable,
                              store: Store,
-                             reporter: Reporter): RAST.Expr = {
+                                 reporter: Reporter): (RAST.Expr, Map[String, (RAST.Expr, GumboC2POUtil.C2POType.Type)]) = {
+    val (exp, variablesInSpec) = GumboC2POUtil.collectIdentifiers(spec.exp, gclSymbolTable)
+
     // To-Do: Edit SlangExpUtil to return C2PO format
     val c2poExp =
       SlangExpUtil.rewriteExpH(
-        rexp = spec.exp,
+        rexp = exp,
 
         owner = component.classifier,
         optComponent = Some(component),
@@ -204,12 +204,30 @@ object GumboRustUtil {
         store = store,
         reporter = reporter)
 
-    val variablesInSpec: ISZ[(String, String)] = collectIdentifiers(spec.exp, gclSymbolTable)
-    println(s">> DEBUG: GclSpec [${spec.id.value}] -> ${spec.exp} mentions variables: ${variablesInSpec}")
+    var variablesInSpecExpanded: Map[String, (RAST.Expr, GumboC2POUtil.C2POType.Type)] = Map.empty
+    for ( (varName, varExp) <- variablesInSpec.entries){
+      val valExpr = SlangExpUtil.rewriteExpH(
+        rexp = varExp,
 
-    return RAST.ExprST(
+        owner = component.classifier,
+        optComponent = Some(component),
+        context = context,
+
+        inRequires = isAssumeRequires,
+        target = TargetLanguage.rust,
+        substitutions = Map.empty,
+        aadlTypes = types,
+        tp = tp,
+        store = store,
+        reporter = reporter)
+      variablesInSpecExpanded += (varName -> (RAST.ExprST(st"""${valExpr}"""), GumboC2POUtil.getExprType(varExp, gclSymbolTable)))
+    }
+
+    val spec_st: RAST.Expr = RAST.ExprST(
       st"""${st"\t${GumboRustUtil.processDescriptor(spec.descriptor, "-- ")}"}
           |${spec.id}: ${c2poExp};""")
+
+    return (spec_st, variablesInSpecExpanded)
   }
 
   @pure def processGumboCase(c: GclCaseStatement,
