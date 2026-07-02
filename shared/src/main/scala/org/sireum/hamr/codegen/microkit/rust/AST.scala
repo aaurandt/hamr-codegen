@@ -195,6 +195,9 @@ object Printers {
 @datatype class R2U2InputDef(val name: String,
                             val type_dec: C2POType.Type,
                             val idx: Int) extends Item {
+  @pure def printMap: ST = {
+    return (st"""${name}:${idx}""")
+  }
   @pure override def prettyST: ST = {
     return (st"""${name}: ${type_dec};""")
   }
@@ -203,6 +206,14 @@ object Printers {
 @datatype class R2U2SpecDef(val inputs: ISZ[R2U2InputDef],
                           val ftspecs: ISZ[Item],
                           val ptspecs: ISZ[Item]) extends Item {
+  @pure def printMap: ST = {
+    if (inputs.nonEmpty){
+      return st"${(for(i <- inputs) yield i.printMap, "\n")}"
+    } else {
+      return st""
+    }
+  }
+
   @pure override def prettyST: ST = {
     return (
       st"""INPUT

@@ -422,14 +422,16 @@ object ComponentContributions {}
                 |
                 |${(for(f <- e._2.moduleLevelEntries) yield f.prettyST, "\n\n")}"""
         }
-
+        if (e._2.requiresR2U2) {
+          body =
+            st"""const SPEC: [u8; include_bytes!("spec.bin").len()] = *include_bytes!("spec.bin");
+                |
+                |$body"""
+        }
         if (e._2.requiresVerus && !options.verusAttributeSyntax) {
           body = RAST.MacCall(
             macName = "verus",
             items = ISZ(RAST.ItemST(body))).prettyST
-        }
-        if (e._2.requiresR2U2) {
-          uses = uses :+ RAST.Use(ISZ(), RAST.IdentString("crate::component::spec::SPEC"))
         }
         val content =
           st"""${(for (d <- e._2.appModDirectives) yield d.prettyST, "\n")}
@@ -454,7 +456,6 @@ object ComponentContributions {}
           st"""${CommentTemplate.safeToEditComment_slash}
               |
               |pub mod $modName;
-              |${if (e._2.requiresR2U2) "pub mod spec;" else ""}
               |"""
         val path = s"$componentDir/mod.rs"
         resources = resources :+ ResourceUtil.createResource(path, content, F)
@@ -462,26 +463,18 @@ object ComponentContributions {}
 
       { // src/monitor/spec.c2po + src/monitor/spec.map
         if (e._2.requiresR2U2){
-          val content =
+          val spec_content =
             st"""${CommentTemplate.doNotEditComment_c2po}
                  |
                  |${e._2.appR2U2SpecDef.get.prettyST}
                  |"""
-          val path = s"$componentDir/spec.c2po"
-          resources = resources :+ ResourceUtil.createResource(path, content, T)
-        }
-      }
-
-      { // src/monitor/spec.rs
-        if (e._2.requiresR2U2){
-          val content =
-            st"""${CommentTemplate.doNotEditComment_slash}
-                 |
-                 |pub const SPEC: [u8; 1] = [
-                 |0x01
-                 |];"""
-          val path = s"$componentDir/spec.rs"
-          resources = resources :+ ResourceUtil.createResource(path, content, T)
+          val spec_path = s"$componentDir/spec.c2po"
+          resources = resources :+ ResourceUtil.createResource(spec_path, spec_content, T)
+          val map_content = st"""${CommentTemplate.doNotEditComment_c2po}
+                 |${e._2.appR2U2SpecDef.get.printMap}
+                 |"""
+          val map_path = s"$componentDir/spec.map"
+          resources = resources :+ ResourceUtil.createResource(map_path, map_content, T)
         }
       }
 
@@ -540,7 +533,7 @@ object ComponentContributions {}
               |
               |sel4_include_dirs := $$(firstword $$(wildcard $$(microkit_sdk_config_dir)/include \
               |                                            $$(microkit_sdk_config_dir)/debug/include))
-              |
+              |${if (e._2.requiresR2U2) "R2U2_SPEC_BIN := src/component/spec.bin\n" else ""}
               |ENV_VARS = RUSTC_BOOTSTRAP=1
               |
               |BUILD_ENV_VARS = $$(ENV_VARS) \
@@ -551,23 +544,33 @@ object ComponentContributions {}
               |              --target aarch64-unknown-none
               |
               |all: build-verus-release
+              |${if (e._2.requiresR2U2) st"""
+              |r2u2_cli:
+              |${TAB}@echo "Checking/Updating r2u2_cli from crates.io..."
+              |${TAB}cargo +stable install r2u2_cli --version ${MicrokitUtil.getMicrokitVersions(localStore).get("r2u2").get}
               |
-              |build-verus-release:
+              |$$(R2U2_SPEC_BIN): r2u2_cli
+              |${TAB}cd src/component && \
+              |${TAB}sed '/^--/d' spec.map > temp.map && \
+              |${TAB}r2u2_cli compile -o . spec.c2po temp.map && \
+              |${TAB}rm temp.map
+              |""" else ""}
+              |build-verus-release: ${if (e._2.requiresR2U2) "$(R2U2_SPEC_BIN)" else ""}
               |${TAB}$$(BUILD_ENV_VARS) cargo-verus build --features sel4 $$(CARGO_FLAGS) --release
               |
-              |build-verus:
+              |build-verus: ${if (e._2.requiresR2U2) "$(R2U2_SPEC_BIN)" else ""}
               |${TAB}$$(BUILD_ENV_VARS) cargo-verus build --features sel4 $$(CARGO_FLAGS)
               |
-              |build-release:
+              |build-release: ${if (e._2.requiresR2U2) "$(R2U2_SPEC_BIN)" else ""}
               |${TAB}$$(BUILD_ENV_VARS) cargo build --features sel4 $$(CARGO_FLAGS) --release
               |
-              |build:
+              |build: ${if (e._2.requiresR2U2) "$(R2U2_SPEC_BIN)" else ""}
               |${TAB}$$(BUILD_ENV_VARS) cargo build --features sel4 $$(CARGO_FLAGS)
               |
-              |verus:
+              |verus: ${if (e._2.requiresR2U2) "$(R2U2_SPEC_BIN)" else ""}
               |${TAB}$$(ENV_VARS) cargo-verus verify $$(CARGO_FLAGS)
               |
-              |verus-json:
+              |verus-json: ${if (e._2.requiresR2U2) "$(R2U2_SPEC_BIN)" else ""}
               |${TAB}$$(ENV_VARS) cargo-verus verify $$(CARGO_FLAGS) -- --output-json --time > verus_results.json
               |
               |# Test Example:
@@ -577,10 +580,10 @@ object ComponentContributions {}
               |#   Run only unit tests whose name contains 'proptest'
               |#   Usage: make test args=proptest
               |
-              |test-release:
+              |test-release: ${if (e._2.requiresR2U2) "$(R2U2_SPEC_BIN)" else ""}
               |${TAB}cargo test $$(args) --release
               |
-              |test:
+              |test: ${if (e._2.requiresR2U2) "$(R2U2_SPEC_BIN)" else ""}
               |${TAB}cargo test $$(args)
               |
               |# Coverage Example:
@@ -590,7 +593,7 @@ object ComponentContributions {}
               |#   Generate a test coverage report for unit tests whose name contains 'proptest'
               |#   Usage: make coverage args=proptest
               |
-              |coverage:
+              |coverage: ${if (e._2.requiresR2U2) "$(R2U2_SPEC_BIN)" else ""}
               |${TAB}cargo install grcov
               |${TAB}@exists=0; if [ -f target/coverage/report/index.html ]; then exists=1; fi; \
               |${TAB}rm -rf target/coverage; \
@@ -601,7 +604,7 @@ object ComponentContributions {}
               |
               |clean:
               |${TAB}cargo clean
-              |"""
+              |${if (e._2.requiresR2U2)s"""${TAB}rm src/component/spec.bin""" else ""}"""
         val path = s"$componentCrateDir/Makefile"
         resources = resources :+ ResourceUtil.createResource(path, content, F)
       }

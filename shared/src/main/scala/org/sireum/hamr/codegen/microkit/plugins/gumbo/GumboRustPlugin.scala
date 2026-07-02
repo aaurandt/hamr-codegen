@@ -850,7 +850,7 @@ object GumboRustPlugin {
                                  reporter: Reporter): (Marker, RAST.FnImpl) = {
     val m = Marker.createSlashMarker(GumboRustUtil.GumboMarkers. gumboMonitor)
     var monitor: ISZ[RAST.Item] = ISZ()
-    monitor = monitor :+ RAST.ItemString(s"""r2u2_core::update_binary_file(&SPEC, &mut self.monitor);""")
+    monitor = monitor :+ RAST.ItemString(s"""r2u2_core::update_binary_file(&SPEC, &mut self.r2u2_monitor);""")
     val wrapper = RAST.MarkerWrap(m, monitor, "\n", None())
     return (m,
       fn(body =
@@ -892,17 +892,28 @@ object GumboRustPlugin {
     }
 
     var idx = 0
+    var monitorInputs: ISZ[RAST.Item] = ISZ()
     for ( (exp_name, (exp, exp_type)) <- allVariablesInSpecs.entries){
       specs = specs(inputs = specs.inputs :+ RAST.R2U2InputDef(exp_name, exp_type, idx.toInt))
+      exp_type match {
+        case GumboC2POUtil.C2POType.bool =>
+          monitorInputs = monitorInputs :+ RAST.ItemST(st"""r2u2_core::load_bool_signal(&mut self.r2u2_monitor, ${idx}, ${exp.prettyST}); // Loading signal ${exp_name} into index ${idx}""")
+        case GumboC2POUtil.C2POType.int =>
+          monitorInputs = monitorInputs :+ RAST.ItemST(st"""r2u2_core::load_int_signal(&mut self.r2u2_monitor, ${idx}, ${exp.prettyST}); // Loading signal ${exp_name} into index ${idx}""")
+        case GumboC2POUtil.C2POType.float =>
+          monitorInputs = monitorInputs :+ RAST.ItemST(st"""r2u2_core::load_float_signal(&mut self.r2u2_monitor, ${idx}, ${exp.prettyST}); // Loading signal ${exp_name} into index ${idx}""")
+      }
       idx += 1
       println(s">> DEBUG PLUGIN: [${exp_name}] is ${exp.prettyST} of type ${exp_type}")
     }
+    monitorInputs = monitorInputs :+ RAST.ItemST(st"""r2u2_core::monitor_step(&mut self.r2u2_monitor);""")
+    monitorInputs = monitorInputs :+ RAST.ItemST(st"""for out in r2u2_core::get_output_buffer(&self.r2u2_monitor) {
+                                                        |    log::info!("{}:{},{}", out.spec_num, out.verdict.time, if out.verdict.truth {"T"} else {"F"} );
+                                                        |}""")
 
     val m = Marker.createSlashMarker(GumboRustUtil.GumboMarkers. gumboMonitor)
     val markers: ISZ[Marker] = ISZ(m)
-    var monitorInputs: ISZ[RAST.Item] = ISZ()
-    monitorInputs = monitorInputs :+ RAST.ItemString(s"""// To-Do: Add R2U2 API calls""")
-    val wrapper = RAST.MarkerWrap(m, monitorInputs, ",\n", Some("\n"))
+    val wrapper = RAST.MarkerWrap(m, monitorInputs, "\n", Some("\n"))
     return ((markers,
       fn(body =
         Some(RAST.MethodBody(ISZ(

@@ -10,6 +10,7 @@ import org.sireum.hamr.codegen.common.types.{AadlTypes, SlangType}
 import SlangExpUtil.{Context, TargetLanguage}
 import org.sireum.hamr.codegen.microkit.plugins.rust.component.CRustComponentPlugin
 import org.sireum.hamr.codegen.microkit.plugins.rust.types.{CRustTypeNameProvider, CRustTypeProvider}
+import org.sireum.hamr.codegen.microkit.rust.FnVerusHeader
 import org.sireum.hamr.codegen.microkit.types.MicrokitTypeUtil
 import org.sireum.hamr.codegen.microkit.{rust => RAST}
 import org.sireum.hamr.ir._
