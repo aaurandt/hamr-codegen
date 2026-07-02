@@ -904,7 +904,6 @@ object GumboRustPlugin {
           monitorInputs = monitorInputs :+ RAST.ItemST(st"""r2u2_core::load_float_signal(&mut self.r2u2_monitor, ${idx}, ${exp.prettyST}); // Loading signal ${exp_name} into index ${idx}""")
       }
       idx += 1
-      println(s">> DEBUG PLUGIN: [${exp_name}] is ${exp.prettyST} of type ${exp_type}")
     }
     monitorInputs = monitorInputs :+ RAST.ItemST(st"""r2u2_core::monitor_step(&mut self.r2u2_monitor);""")
     monitorInputs = monitorInputs :+ RAST.ItemST(st"""for out in r2u2_core::get_output_buffer(&self.r2u2_monitor) {

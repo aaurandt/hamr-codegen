@@ -186,7 +186,6 @@ object GumboC2POUtil {
         if (propName == "nonEmpty" || propName == "isEmpty") {
           getFlatPathString(sel) match {
             case Some(collapsedString) =>
-              println("We got here!");
               // 1A. SUCCESS: We found an API chain ending in a collection status!
               categorized += (collapsedString -> sel)
 
