@@ -33,6 +33,18 @@ jobs:
         with:
           path: hamr-codegen
           submodules: recursive
+      - name: Checkout forked AIR
+        uses: actions/checkout@v5
+        with:
+          repository: aaurandt/air
+          ref: master
+          path: hamr-codegen/air
+      - name: Checkout forked Slang
+        uses: actions/checkout@v5
+        with:
+          repository: aaurandt/slang
+          ref: master
+          path: hamr-codegen/slang
       - name: Checkout runtime-monitoring INSPECTA models
         uses: actions/checkout@v5
         with:

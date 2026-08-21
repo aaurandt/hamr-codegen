@@ -35,6 +35,18 @@ jobs:
         uses: actions/checkout@v5
         with:
           submodules: recursive
+      - name: Checkout forked AIR
+        uses: actions/checkout@v5
+        with:
+          repository: aaurandt/air
+          ref: master
+          path: air
+      - name: Checkout forked Slang
+        uses: actions/checkout@v5
+        with:
+          repository: aaurandt/slang
+          ref: master
+          path: slang
       - name: Checkout runtime-monitoring INSPECTA models
         if: contains(matrix.testSuffix, 'MicrokitTests')
         uses: actions/checkout@v5

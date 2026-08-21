@@ -33,6 +33,20 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Checkout forked AIR
+        uses: actions/checkout@v5
+        with:
+          repository: aaurandt/air
+          ref: master
+          path: air
+
+      - name: Checkout forked Slang
+        uses: actions/checkout@v5
+        with:
+          repository: aaurandt/slang
+          ref: master
+          path: slang
+
       - name: Retrieve versions.properties
         run: |
           wget -q https://raw.githubusercontent.com/sireum/kekinian/master/versions.properties
