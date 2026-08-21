@@ -147,7 +147,8 @@ jobs:
           echo "VM_PARTITION=${VM_PARTITION}"
           
           # see https://github.com/sireum/hamr-codegen-test/blob/master/scala/org/sireum/hamr/codegen/test/util/TestMode.scala
-          export testmodes=phantom,sergen,slangcheck,tipe,ive,compile,camkes,generated_unit_tests,smt2${VERBOSE_DEBUG}
+          # Phantom remains disabled until the monitor-capable GUMBO plugin is published.
+          export testmodes=sergen,slangcheck,tipe,ive,compile,camkes,generated_unit_tests,smt2${VERBOSE_DEBUG}
           echo "testmodes=${testmodes}"
           
           export SMT2_TIMEOUT=180000
